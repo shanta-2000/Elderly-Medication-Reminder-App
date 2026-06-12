@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "936565722490",
+    "project_id": "emrapp-90117",
+    "storage_bucket": "emrapp-90117.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:936565722490:android:9f4c02c0985b864d099ac3",
+        "android_client_info": {
+          "package_name": "com.example.emrapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBAH_ukWyDQw7eFr_oNnI3zl4GDCh9pmOU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
