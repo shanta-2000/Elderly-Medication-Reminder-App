@@ -20,15 +20,73 @@ class AddMedicineScreen extends StatefulWidget {
 class _AddMedicineScreenState extends State<AddMedicineScreen> {
   final medicineNameController = TextEditingController();
   final instructionController = TextEditingController();
+  final durationController = TextEditingController(text: '7');
 
   String medicineImagePath = '';
   final List<String> medicineTimes = [];
+
+  DateTime startDate = dateOnly(DateTime.now());
+  DateTime? customEndDate;
+
+  bool useCustomEndDate = false;
+  String selectedDurationUnit = 'দিন';
 
   @override
   void dispose() {
     medicineNameController.dispose();
     instructionController.dispose();
+    durationController.dispose();
     super.dispose();
+  }
+
+  DateTime addMonths(DateTime date, int months) {
+    return DateTime(date.year, date.month + months, date.day);
+  }
+
+  DateTime calculateEndDate() {
+    if (useCustomEndDate && customEndDate != null) {
+      return dateOnly(customEndDate!);
+    }
+
+    final value = int.tryParse(durationController.text.trim()) ?? 0;
+
+    if (selectedDurationUnit == 'দিন') {
+      return startDate.add(Duration(days: value - 1));
+    }
+
+    if (selectedDurationUnit == 'সপ্তাহ') {
+      return startDate.add(Duration(days: (value * 7) - 1));
+    }
+
+    if (selectedDurationUnit == 'মাস') {
+      return addMonths(startDate, value).subtract(const Duration(days: 1));
+    }
+
+    return startDate;
+  }
+
+  int calculateTotalDays() {
+    final endDate = calculateEndDate();
+    return dateOnly(endDate).difference(dateOnly(startDate)).inDays + 1;
+  }
+
+  String formatDate(DateTime date) {
+    const months = [
+      'জানু',
+      'ফেব',
+      'মার্চ',
+      'এপ্রিল',
+      'মে',
+      'জুন',
+      'জুলাই',
+      'আগ',
+      'সেপ্ট',
+      'অক্টো',
+      'নভে',
+      'ডিসে',
+    ];
+
+    return '${date.day} ${months[date.month - 1]} ${date.year}';
   }
 
   Future<void> pickMedicineImage() async {
@@ -59,6 +117,41 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     }
   }
 
+  Future<void> pickStartDate() async {
+    final pickedDate = await showDatePicker(
+      context: context,
+      initialDate: startDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2035),
+    );
+
+    if (pickedDate != null) {
+      setState(() {
+        startDate = dateOnly(pickedDate);
+
+        if (customEndDate != null &&
+            dateOnly(customEndDate!).isBefore(startDate)) {
+          customEndDate = startDate;
+        }
+      });
+    }
+  }
+
+  Future<void> pickCustomEndDate() async {
+    final pickedDate = await showDatePicker(
+      context: context,
+      initialDate: customEndDate ?? startDate,
+      firstDate: startDate,
+      lastDate: DateTime(2035),
+    );
+
+    if (pickedDate != null) {
+      setState(() {
+        customEndDate = dateOnly(pickedDate);
+      });
+    }
+  }
+
   void removeTime(String time) {
     setState(() {
       medicineTimes.remove(time);
@@ -67,11 +160,41 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
 
   void saveMedicine() {
     final medicineName = medicineNameController.text.trim();
+    final durationValue = int.tryParse(durationController.text.trim());
 
     if (medicineName.isEmpty || medicineTimes.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('ওষুধের নাম ও সময় দিন'),
+        ),
+      );
+      return;
+    }
+
+    if (!useCustomEndDate && (durationValue == null || durationValue <= 0)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('সঠিক সময়কাল দিন'),
+        ),
+      );
+      return;
+    }
+
+    if (useCustomEndDate && customEndDate == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('শেষ তারিখ নির্বাচন করুন'),
+        ),
+      );
+      return;
+    }
+
+    final endDate = calculateEndDate();
+
+    if (endDate.isBefore(startDate)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('শেষ তারিখ শুরু তারিখের আগে হতে পারে না'),
         ),
       );
       return;
@@ -83,6 +206,8 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       imagePath: medicineImagePath,
       instruction: instructionController.text.trim(),
       times: List<String>.from(medicineTimes),
+      startDate: startDate,
+      endDate: endDate,
     );
 
     showDialog(
@@ -94,10 +219,10 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
             'ওষুধ সংরক্ষিত হয়েছে',
             textAlign: TextAlign.center,
           ),
-          content: const Text(
-            'রোগীর ওষুধের তালিকায় নতুন ওষুধ যোগ করা হয়েছে।',
+          content: Text(
+            'শুরু: ${formatDate(startDate)}\nশেষ: ${formatDate(endDate)}\nমোট সময়: ${calculateTotalDays()} দিন',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 16),
+            style: const TextStyle(fontSize: 16),
           ),
           actionsAlignment: MainAxisAlignment.center,
           actions: [
@@ -116,6 +241,9 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final endDate = calculateEndDate();
+    final totalDays = calculateTotalDays();
+
     return Scaffold(
       backgroundColor: const Color(0xFFF7F8FA),
       appBar: PreferredSize(
@@ -162,9 +290,10 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
             MedicineInputField(
               controller: medicineNameController,
               label: 'ওষুধের নাম *',
-              hint: 'যেমন: রক্তচাপের ওষুধ',
+              hint: 'যেমন: Napa',
             ),
             const SizedBox(height: 14),
+
             const Text(
               'ওষুধের ছবি',
               style: TextStyle(
@@ -187,6 +316,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                 ),
               ],
             ),
+
             const SizedBox(height: 14),
             MedicineInputField(
               controller: instructionController,
@@ -194,6 +324,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
               hint: 'যেমন: খাবার পরে খেতে হবে',
               maxLines: 3,
             ),
+
             const SizedBox(height: 14),
             const Text(
               'খাওয়ার সময় *',
@@ -246,6 +377,95 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                 label: const Text('আরও সময় যোগ করুন'),
               ),
             ),
+
+            const SizedBox(height: 16),
+            const Text(
+              'শুরু তারিখ',
+              style: TextStyle(
+                fontSize: 13,
+                color: Color(0xFF344054),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            DatePickerBox(
+              text: formatDate(startDate),
+              onTap: pickStartDate,
+            ),
+
+            const SizedBox(height: 16),
+            const Text(
+              'সময়কাল নির্বাচন করুন',
+              style: TextStyle(
+                fontSize: 13,
+                color: Color(0xFF344054),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            DurationModeSelector(
+              useCustomEndDate: useCustomEndDate,
+              onChanged: (value) {
+                setState(() {
+                  useCustomEndDate = value;
+                });
+              },
+            ),
+
+            const SizedBox(height: 12),
+            if (!useCustomEndDate)
+              Row(
+                children: [
+                  Expanded(
+                    child: MedicineInputField(
+                      controller: durationController,
+                      label: 'সময়কাল',
+                      hint: 'যেমন: 7',
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: DurationUnitDropdown(
+                      value: selectedDurationUnit,
+                      onChanged: (value) {
+                        setState(() {
+                          selectedDurationUnit = value;
+                        });
+                      },
+                    ),
+                  ),
+                ],
+              )
+            else
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'শেষ তারিখ',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Color(0xFF344054),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  DatePickerBox(
+                    text: customEndDate == null
+                        ? 'শেষ তারিখ নির্বাচন করুন'
+                        : formatDate(customEndDate!),
+                    onTap: pickCustomEndDate,
+                  ),
+                ],
+              ),
+
+            const SizedBox(height: 14),
+            DurationSummaryBox(
+              startDateText: formatDate(startDate),
+              endDateText: formatDate(endDate),
+              totalDays: totalDays,
+            ),
+
             const SizedBox(height: 18),
             SizedBox(
               width: double.infinity,
@@ -287,6 +507,256 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class DatePickerBox extends StatelessWidget {
+  const DatePickerBox({
+    super.key,
+    required this.text,
+    required this.onTap,
+  });
+
+  final String text;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(11),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border.all(color: const Color(0xFFD0D5DD)),
+          borderRadius: BorderRadius.circular(11),
+        ),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.calendar_month_outlined,
+              color: Color(0xFF667085),
+              size: 20,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                text,
+                style: const TextStyle(
+                  color: Color(0xFF344054),
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            const Icon(
+              Icons.keyboard_arrow_down,
+              color: Color(0xFF667085),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class DurationModeSelector extends StatelessWidget {
+  const DurationModeSelector({
+    super.key,
+    required this.useCustomEndDate,
+    required this.onChanged,
+  });
+
+  final bool useCustomEndDate;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: DurationModeBox(
+            title: 'সংখ্যা ভিত্তিক',
+            isSelected: !useCustomEndDate,
+            onTap: () => onChanged(false),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: DurationModeBox(
+            title: 'কাস্টম তারিখ',
+            isSelected: useCustomEndDate,
+            onTap: () => onChanged(true),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class DurationModeBox extends StatelessWidget {
+  const DurationModeBox({
+    super.key,
+    required this.title,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final String title;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(11),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFFEDE7F6) : Colors.white,
+          borderRadius: BorderRadius.circular(11),
+          border: Border.all(
+            color: isSelected
+                ? const Color(0xFFB144F5)
+                : const Color(0xFFD0D5DD),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isSelected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+              color: isSelected
+                  ? const Color(0xFFB144F5)
+                  : const Color(0xFF667085),
+              size: 20,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                title,
+                style: TextStyle(
+                  color: isSelected
+                      ? const Color(0xFF7E22CE)
+                      : const Color(0xFF344054),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class DurationUnitDropdown extends StatelessWidget {
+  const DurationUnitDropdown({
+    super.key,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'একক',
+          style: TextStyle(
+            fontSize: 13,
+            color: Color(0xFF344054),
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: const Color(0xFFD0D5DD)),
+            borderRadius: BorderRadius.circular(11),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: value,
+              isExpanded: true,
+              items: const [
+                DropdownMenuItem(
+                  value: 'দিন',
+                  child: Text('দিন'),
+                ),
+                DropdownMenuItem(
+                  value: 'সপ্তাহ',
+                  child: Text('সপ্তাহ'),
+                ),
+                DropdownMenuItem(
+                  value: 'মাস',
+                  child: Text('মাস'),
+                ),
+              ],
+              onChanged: (newValue) {
+                if (newValue != null) {
+                  onChanged(newValue);
+                }
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class DurationSummaryBox extends StatelessWidget {
+  const DurationSummaryBox({
+    super.key,
+    required this.startDateText,
+    required this.endDateText,
+    required this.totalDays,
+  });
+
+  final String startDateText;
+  final String endDateText;
+  final int totalDays;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF2F7FF),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFD8E7FF)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'সময়কাল সারাংশ',
+            style: TextStyle(
+              color: Color(0xFF344054),
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text('শুরু: $startDateText'),
+          Text('শেষ: $endDateText'),
+          Text('মোট সময়: $totalDays দিন'),
+        ],
       ),
     );
   }
@@ -337,12 +807,14 @@ class MedicineInputField extends StatelessWidget {
     required this.label,
     required this.hint,
     this.maxLines = 1,
+    this.keyboardType,
   });
 
   final TextEditingController controller;
   final String label;
   final String hint;
   final int maxLines;
+  final TextInputType? keyboardType;
 
   @override
   Widget build(BuildContext context) {
@@ -361,6 +833,7 @@ class MedicineInputField extends StatelessWidget {
         TextField(
           controller: controller,
           maxLines: maxLines,
+          keyboardType: keyboardType,
           decoration: InputDecoration(
             hintText: hint,
             hintStyle: const TextStyle(

@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import '../models/patient_model.dart';
 import 'patient_details_screen.dart';
 
-class PatientListScreen extends StatelessWidget {
+class PatientListScreen extends StatefulWidget {
   const PatientListScreen({
     super.key,
     required this.patients,
@@ -14,7 +14,27 @@ class PatientListScreen extends StatelessWidget {
   final List<Patient> patients;
 
   @override
+  State<PatientListScreen> createState() => _PatientListScreenState();
+}
+
+class _PatientListScreenState extends State<PatientListScreen> {
+  Future<void> openPatientDetails(Patient patient) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => PatientDetailsScreen(patient: patient),
+      ),
+    );
+
+    if (!mounted) return;
+
+    setState(() {});
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final patients = widget.patients;
+
     return Scaffold(
       backgroundColor: const Color(0xFFF7F8FA),
       appBar: PreferredSize(
@@ -77,7 +97,13 @@ class PatientListScreen extends StatelessWidget {
               )
             else
               ...patients.map(
-                    (patient) => PatientCard(patient: patient),
+                    (patient) => PatientCard(
+                  key: ValueKey(
+                    '${patient.id}_${patient.medicines.length}_${patient.activityLogs.length}',
+                  ),
+                  patient: patient,
+                  onTap: () => openPatientDetails(patient),
+                ),
               ),
           ],
         ),
@@ -90,18 +116,11 @@ class PatientCard extends StatelessWidget {
   const PatientCard({
     super.key,
     required this.patient,
+    required this.onTap,
   });
 
   final Patient patient;
-
-  void openPatientDetails(BuildContext context) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => PatientDetailsScreen(patient: patient),
-      ),
-    );
-  }
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -111,7 +130,7 @@ class PatientCard extends StatelessWidget {
       shadowColor: Colors.black.withOpacity(0.12),
       borderRadius: BorderRadius.circular(18),
       child: InkWell(
-        onTap: () => openPatientDetails(context),
+        onTap: onTap,
         borderRadius: BorderRadius.circular(18),
         child: Container(
           margin: const EdgeInsets.only(bottom: 16),

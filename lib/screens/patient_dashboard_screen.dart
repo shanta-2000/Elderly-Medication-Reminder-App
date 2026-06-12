@@ -10,6 +10,15 @@ enum DayPeriod {
   night,
 }
 
+String twoDigit(int value) {
+  return value.toString().padLeft(2, '0');
+}
+
+String dateKey(DateTime date) {
+  final cleanDate = dateOnly(date);
+  return '${cleanDate.year}-${twoDigit(cleanDate.month)}-${twoDigit(cleanDate.day)}';
+}
+
 String periodKey(DayPeriod period) {
   switch (period) {
     case DayPeriod.morning:
@@ -21,6 +30,10 @@ String periodKey(DayPeriod period) {
   }
 }
 
+String doseKey(DateTime date, DayPeriod period) {
+  return '${dateKey(date)}_${periodKey(period)}';
+}
+
 String periodTitle(DayPeriod period) {
   switch (period) {
     case DayPeriod.morning:
@@ -29,6 +42,17 @@ String periodTitle(DayPeriod period) {
       return 'দুপুর';
     case DayPeriod.night:
       return 'রাত';
+  }
+}
+
+String periodPossessive(DayPeriod period) {
+  switch (period) {
+    case DayPeriod.morning:
+      return 'সকালের';
+    case DayPeriod.afternoon:
+      return 'দুপুরের';
+    case DayPeriod.night:
+      return 'রাতের';
   }
 }
 
@@ -59,22 +83,68 @@ DayPeriod periodFromTimeText(String timeText) {
   }
 }
 
-List<DayPeriod> getScheduledPeriods(Patient patient) {
-  final periods = <DayPeriod>{};
-
-  for (final medicine in patient.medicines) {
-    for (final time in medicine.times) {
-      periods.add(periodFromTimeText(time));
-    }
-  }
-
-  const orderedPeriods = [
-    DayPeriod.morning,
-    DayPeriod.afternoon,
-    DayPeriod.night,
+String formatDate(DateTime date) {
+  const months = [
+    'জানু',
+    'ফেব',
+    'মার্চ',
+    'এপ্রিল',
+    'মে',
+    'জুন',
+    'জুলাই',
+    'আগ',
+    'সেপ্ট',
+    'অক্টো',
+    'নভে',
+    'ডিসে',
   ];
 
-  return orderedPeriods.where(periods.contains).toList();
+  return '${date.day} ${months[date.month - 1]} ${date.year}';
+}
+
+String formatShortDate(DateTime date) {
+  const months = [
+    'জানু',
+    'ফেব',
+    'মার্চ',
+    'এপ্রিল',
+    'মে',
+    'জুন',
+    'জুলাই',
+    'আগ',
+    'সেপ্ট',
+    'অক্টো',
+    'নভে',
+    'ডিসে',
+  ];
+
+  return '${date.day} ${months[date.month - 1]}';
+}
+
+String formatActivityTime(DateTime time) {
+  final hour = time.hour > 12
+      ? time.hour - 12
+      : time.hour == 0
+      ? 12
+      : time.hour;
+
+  final minute = time.minute.toString().padLeft(2, '0');
+  final period = time.hour >= 12 ? 'PM' : 'AM';
+
+  return '$hour:$minute $period';
+}
+
+List<DateTime> getMedicineDates(MedicineEntry medicine) {
+  final dates = <DateTime>[];
+  DateTime currentDate = dateOnly(medicine.startDate);
+  final endDate = dateOnly(medicine.endDate);
+
+  while (!currentDate.isAfter(endDate)) {
+    dates.add(currentDate);
+    currentDate = currentDate.add(const Duration(days: 1));
+  }
+
+  return dates;
 }
 
 List<DayPeriod> getMedicinePeriods(MedicineEntry medicine) {
@@ -97,48 +167,117 @@ bool isMedicineScheduledInPeriod(MedicineEntry medicine, DayPeriod period) {
   return medicine.times.any((time) => periodFromTimeText(time) == period);
 }
 
-bool isMedicineTakenInPeriod(MedicineEntry medicine, DayPeriod period) {
-  return medicine.takenPeriodKeys.contains(periodKey(period));
+bool isMedicineActiveOnDate(MedicineEntry medicine, DateTime date) {
+  final cleanDate = dateOnly(date);
+  final start = dateOnly(medicine.startDate);
+  final end = dateOnly(medicine.endDate);
+
+  return !cleanDate.isBefore(start) && !cleanDate.isAfter(end);
 }
 
-bool isMedicineMissedInPeriod(MedicineEntry medicine, DayPeriod period) {
-  return medicine.missedPeriodKeys.contains(periodKey(period));
+bool isDoseTaken(MedicineEntry medicine, DateTime date, DayPeriod period) {
+  return medicine.takenDoseKeys.contains(doseKey(date, period));
 }
 
-bool isPeriodCompleted(Patient patient, DayPeriod period) {
+bool isDoseMissed(MedicineEntry medicine, DateTime date, DayPeriod period) {
+  return medicine.missedDoseKeys.contains(doseKey(date, period));
+}
+
+List<DayPeriod> getTodayScheduledPeriods(Patient patient) {
+  final today = dateOnly(DateTime.now());
+  final periods = <DayPeriod>{};
+
+  for (final medicine in patient.medicines) {
+    if (!isMedicineActiveOnDate(medicine, today)) continue;
+
+    for (final time in medicine.times) {
+      periods.add(periodFromTimeText(time));
+    }
+  }
+
+  const orderedPeriods = [
+    DayPeriod.morning,
+    DayPeriod.afternoon,
+    DayPeriod.night,
+  ];
+
+  return orderedPeriods.where(periods.contains).toList();
+}
+
+bool isPeriodCompletedToday(Patient patient, DayPeriod period) {
+  final today = dateOnly(DateTime.now());
+
   final periodMedicines = patient.medicines.where((medicine) {
-    return isMedicineScheduledInPeriod(medicine, period);
+    return isMedicineActiveOnDate(medicine, today) &&
+        isMedicineScheduledInPeriod(medicine, period);
   }).toList();
 
   if (periodMedicines.isEmpty) return false;
 
   return periodMedicines.every((medicine) {
-    return isMedicineTakenInPeriod(medicine, period);
+    return isDoseTaken(medicine, today, period);
   });
 }
 
-bool isMedicineFullyTakenToday(MedicineEntry medicine) {
+bool isMedicineDayTaken(MedicineEntry medicine, DateTime date) {
+  if (!isMedicineActiveOnDate(medicine, date)) return false;
+
   final periods = getMedicinePeriods(medicine);
 
   if (periods.isEmpty) return false;
 
   return periods.every((period) {
-    return medicine.takenPeriodKeys.contains(periodKey(period));
+    return isDoseTaken(medicine, date, period);
   });
 }
 
-bool isMedicinePartlyMissedToday(MedicineEntry medicine) {
-  return medicine.missedPeriodKeys.isNotEmpty;
+bool isMedicineDayMissed(MedicineEntry medicine, DateTime date) {
+  if (!isMedicineActiveOnDate(medicine, date)) return false;
+
+  final periods = getMedicinePeriods(medicine);
+
+  return periods.any((period) {
+    return isDoseMissed(medicine, date, period);
+  });
+}
+
+int takenDaysCount(MedicineEntry medicine) {
+  return getMedicineDates(medicine).where((date) {
+    return isMedicineDayTaken(medicine, date);
+  }).length;
+}
+
+void updateMedicineTodayStatus(MedicineEntry medicine) {
+  final today = dateOnly(DateTime.now());
+
+  if (!isMedicineActiveOnDate(medicine, today)) {
+    medicine.isTakenToday = false;
+    medicine.isMissedToday = false;
+    return;
+  }
+
+  final periods = getMedicinePeriods(medicine);
+
+  medicine.isTakenToday = periods.isNotEmpty &&
+      periods.every((period) {
+        return isDoseTaken(medicine, today, period);
+      });
+
+  medicine.isMissedToday = periods.any((period) {
+    return isDoseMissed(medicine, today, period);
+  });
 }
 
 class MedicineReminderTarget {
   MedicineReminderTarget({
     required this.medicine,
     required this.period,
+    required this.date,
   });
 
   final MedicineEntry medicine;
   final DayPeriod period;
+  final DateTime date;
 }
 
 class PatientDashboardScreen extends StatefulWidget {
@@ -155,12 +294,12 @@ class PatientDashboardScreen extends StatefulWidget {
 
 class _PatientDashboardScreenState extends State<PatientDashboardScreen> {
   List<DayPeriod> get todayPeriods {
-    return getScheduledPeriods(widget.patient);
+    return getTodayScheduledPeriods(widget.patient);
   }
 
   int get completedTaskCount {
     return todayPeriods
-        .where((period) => isPeriodCompleted(widget.patient, period))
+        .where((period) => isPeriodCompletedToday(widget.patient, period))
         .length;
   }
 
@@ -243,6 +382,7 @@ class _PatientDashboardScreenState extends State<PatientDashboardScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: MedicineListCard(patient: patient),
             ),
+
             const SizedBox(height: 24),
           ],
         ),
@@ -461,7 +601,7 @@ class ProgressSection extends StatelessWidget {
           const SizedBox(height: 14),
           if (todayPeriods.isEmpty)
             const Text(
-              'আজ কোনো ওষুধের সময় নির্ধারিত নেই',
+              'আজ কোনো চলমান ওষুধের সময় নেই',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 13,
@@ -474,7 +614,7 @@ class ProgressSection extends StatelessWidget {
                   Expanded(
                     child: ProgressBox(
                       title: periodTitle(todayPeriods[i]),
-                      isCompleted: isPeriodCompleted(
+                      isCompleted: isPeriodCompletedToday(
                         patient,
                         todayPeriods[i],
                       ),
@@ -541,32 +681,23 @@ class ReminderCard extends StatelessWidget {
   final VoidCallback onChanged;
 
   MedicineReminderTarget? get firstPendingDose {
-    final periods = getScheduledPeriods(patient);
+    final today = dateOnly(DateTime.now());
+    final periods = getTodayScheduledPeriods(patient);
 
     for (final period in periods) {
       for (final medicine in patient.medicines) {
         final isScheduled = isMedicineScheduledInPeriod(medicine, period);
-        final isTaken = isMedicineTakenInPeriod(medicine, period);
-        final isMissed = isMedicineMissedInPeriod(medicine, period);
+        final isActive = isMedicineActiveOnDate(medicine, today);
+        final taken = isDoseTaken(medicine, today, period);
+        final missed = isDoseMissed(medicine, today, period);
 
-        if (isScheduled && !isTaken && !isMissed) {
+        if (isActive && isScheduled && !taken && !missed) {
           return MedicineReminderTarget(
             medicine: medicine,
             period: period,
+            date: today,
           );
         }
-      }
-    }
-
-    if (patient.medicines.isNotEmpty) {
-      final medicine = patient.medicines.first;
-      final medicinePeriods = getMedicinePeriods(medicine);
-
-      if (medicinePeriods.isNotEmpty) {
-        return MedicineReminderTarget(
-          medicine: medicine,
-          period: medicinePeriods.first,
-        );
       }
     }
 
@@ -590,24 +721,32 @@ class ReminderCard extends StatelessWidget {
         ),
         child: Column(
           children: [
-            const Icon(
-              Icons.medication_outlined,
+            Icon(
+              target == null
+                  ? Icons.check_circle_outline
+                  : Icons.medication_outlined,
               size: 70,
-              color: Color(0xFFD0D5DD),
+              color: target == null
+                  ? const Color(0xFF22C55E)
+                  : const Color(0xFFD0D5DD),
             ),
             const SizedBox(height: 10),
-            const Text(
-              'কোনো রিমাইন্ডার নেই',
-              style: TextStyle(
+            Text(
+              target == null
+                  ? 'আজকের সব রিমাইন্ডার শেষ'
+                  : '${periodPossessive(target.period)} রিমাইন্ডার',
+              style: const TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.w600,
               ),
             ),
             const SizedBox(height: 5),
-            const Text(
-              'নির্ধারিত সময়ে ওষুধের রিমাইন্ডার আসবে',
+            Text(
+              target == null
+                  ? 'চলমান ওষুধের আজ আর কোনো pending dose নেই'
+                  : '${target.medicine.name} খাওয়ার সময় হয়েছে',
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Color(0xFF667085),
                 fontSize: 13,
               ),
@@ -617,16 +756,9 @@ class ReminderCard extends StatelessWidget {
               width: double.infinity,
               height: 52,
               child: ElevatedButton(
-                onPressed: () async {
-                  if (target == null) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('এখনো কোনো ওষুধ যোগ করা হয়নি'),
-                      ),
-                    );
-                    return;
-                  }
-
+                onPressed: target == null
+                    ? null
+                    : () async {
                   final String? result = await Navigator.push<String>(
                     context,
                     MaterialPageRoute(
@@ -638,59 +770,64 @@ class ReminderCard extends StatelessWidget {
                   );
 
                   if (result == 'taken') {
-                    final key = periodKey(target.period);
+                    final key = doseKey(target.date, target.period);
 
-                    target.medicine.takenPeriodKeys.add(key);
-                    target.medicine.missedPeriodKeys.remove(key);
+                    target.medicine.takenDoseKeys.add(key);
+                    target.medicine.missedDoseKeys.remove(key);
 
-                    target.medicine.isTakenToday =
-                        isMedicineFullyTakenToday(target.medicine);
-                    target.medicine.isMissedToday =
-                        isMedicinePartlyMissedToday(target.medicine);
+                    updateMedicineTodayStatus(target.medicine);
+
                     patient.activityLogs.insert(
                       0,
                       PatientActivityLog(
-                        id: DateTime.now().millisecondsSinceEpoch.toString(),
+                        id: DateTime.now()
+                            .millisecondsSinceEpoch
+                            .toString(),
                         medicineName: target.medicine.name,
                         periodName: periodTitle(target.period),
                         status: 'খেয়েছে',
                         time: DateTime.now(),
+                        date: dateOnly(DateTime.now()),
                       ),
                     );
+
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(
-                          '${periodTitle(target.period)} এর ওষুধ খেয়েছেন হিসেবে সংরক্ষণ হয়েছে',
+                          '${periodPossessive(target.period)} ${target.medicine.name} খেয়েছেন হিসেবে সংরক্ষণ হয়েছে',
                         ),
                       ),
                     );
+
                     onChanged();
                   }
 
                   if (result == 'missed') {
-                    final key = periodKey(target.period);
+                    final key = doseKey(target.date, target.period);
 
-                    target.medicine.missedPeriodKeys.add(key);
-                    target.medicine.takenPeriodKeys.remove(key);
+                    target.medicine.missedDoseKeys.add(key);
+                    target.medicine.takenDoseKeys.remove(key);
 
-                    target.medicine.isTakenToday =
-                        isMedicineFullyTakenToday(target.medicine);
-                    target.medicine.isMissedToday =
-                        isMedicinePartlyMissedToday(target.medicine);
+                    updateMedicineTodayStatus(target.medicine);
+
                     patient.activityLogs.insert(
                       0,
                       PatientActivityLog(
-                        id: DateTime.now().millisecondsSinceEpoch.toString(),
+                        id: DateTime.now()
+                            .millisecondsSinceEpoch
+                            .toString(),
                         medicineName: target.medicine.name,
                         periodName: periodTitle(target.period),
                         status: 'খায়নি',
                         time: DateTime.now(),
+                        date: dateOnly(DateTime.now()),
                       ),
                     );
+
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(
-                          '${periodTitle(target.period)} এর ওষুধ খাইনি হিসেবে সংরক্ষণ হয়েছে',
+                          '${periodPossessive(target.period)} ${target.medicine.name} খাইনি হিসেবে সংরক্ষণ হয়েছে',
                         ),
                       ),
                     );
@@ -700,13 +837,16 @@ class ReminderCard extends StatelessWidget {
                 },
                 style: ElevatedButton.styleFrom(
                   padding: EdgeInsets.zero,
-                  backgroundColor: Colors.transparent,
+                  backgroundColor:
+                  target == null ? Colors.grey.shade300 : Colors.transparent,
                   shadowColor: Colors.transparent,
                 ),
                 child: Ink(
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(11),
-                    gradient: const LinearGradient(
+                    gradient: target == null
+                        ? null
+                        : const LinearGradient(
                       colors: [
                         Color(0xFF2F80ED),
                         Color(0xFFB144F5),
@@ -715,10 +855,14 @@ class ReminderCard extends StatelessWidget {
                   ),
                   child: Container(
                     alignment: Alignment.center,
-                    child: const Text(
-                      'টেস্ট রিমাইন্ডার দেখুন',
+                    child: Text(
+                      target == null
+                          ? 'আজ আর রিমাইন্ডার নেই'
+                          : 'টেস্ট রিমাইন্ডার দেখুন',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: target == null
+                            ? const Color(0xFF667085)
+                            : Colors.white,
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
                       ),
@@ -794,114 +938,498 @@ class PatientMedicineTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final statusText = medicine.isTakenToday
-        ? 'Complete'
-        : medicine.isMissedToday
-        ? 'Missed'
-        : 'Ongoing';
+    final takenDays = takenDaysCount(medicine);
+    final totalDays = medicine.totalDays;
 
-    final statusColor = medicine.isTakenToday
-        ? const Color(0xFF16A34A)
-        : medicine.isMissedToday
-        ? const Color(0xFFDC2626)
-        : const Color(0xFF16A34A);
+    int remainingDays = totalDays - takenDays;
+    if (remainingDays < 0) {
+      remainingDays = 0;
+    }
 
-    final statusBackground = medicine.isTakenToday
-        ? const Color(0xFFEFFAF2)
-        : medicine.isMissedToday
-        ? const Color(0xFFFFF1F1)
-        : const Color(0xFFEFFAF2);
+    final progressValue = totalDays == 0 ? 0.0 : takenDays / totalDays;
+    Color statusColor = const Color(0xFF16A34A);
+    Color statusBackground = const Color(0xFFEFFAF2);
+
+    if (medicine.statusText == 'Complete') {
+      statusColor = const Color(0xFF2563EB);
+      statusBackground = const Color(0xFFE8F0FF);
+    } else if (medicine.statusText == 'Upcoming') {
+      statusColor = const Color(0xFFEA580C);
+      statusBackground = const Color(0xFFFFF4E5);
+    }
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(11),
       decoration: BoxDecoration(
         color: const Color(0xFFF9FAFB),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFFE4E7EC)),
       ),
-      child: Row(
+      child: Column(
         children: [
-          MedicinePhoto(imagePath: medicine.imagePath),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  medicine.name,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                  ),
+          Row(
+            children: [
+              MedicinePhoto(imagePath: medicine.imagePath),
+              const SizedBox(width: 10),
+              Expanded(
+                child: MedicineMainInfo(
+                  medicine: medicine,
+                  statusColor: statusColor,
+                  statusBackground: statusBackground,
                 ),
-                if (medicine.instruction.isNotEmpty)
-                  Text(
-                    medicine.instruction,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Color(0xFF475467),
-                    ),
-                  ),
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 5,
-                  children: medicine.times.map((time) {
-                    final period = periodFromTimeText(time);
-                    final key = periodKey(period);
-                    final isTaken = medicine.takenPeriodKeys.contains(key);
-                    final isMissed = medicine.missedPeriodKeys.contains(key);
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          MedicineDateInfoRow(medicine: medicine),
+          const SizedBox(height: 10),
+          MedicineDaysSummary(
+            takenDays: takenDays,
+            remainingDays: remainingDays,
+          ),
+          const SizedBox(height: 8),
+          LinearProgressIndicator(
+            value: progressValue.clamp(0.0, 1.0),
+            minHeight: 7,
+            borderRadius: BorderRadius.circular(10),
+            backgroundColor: const Color(0xFFE5E7EB),
+            color: const Color(0xFF16A34A),
+          ),
+          const SizedBox(height: 10),
+          MedicineDateProgressStrip(medicine: medicine),
+        ],
+      ),
+    );
+  }
+}
 
-                    Color timeColor = const Color(0xFF2F80ED);
-                    if (isTaken) {
-                      timeColor = const Color(0xFF16A34A);
-                    } else if (isMissed) {
-                      timeColor = const Color(0xFFDC2626);
-                    }
+class MedicineMainInfo extends StatelessWidget {
+  const MedicineMainInfo({
+    super.key,
+    required this.medicine,
+    required this.statusColor,
+    required this.statusBackground,
+  });
 
-                    return Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: timeColor,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        time,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                        ),
-                      ),
-                    );
-                  }).toList(),
+  final MedicineEntry medicine;
+  final Color statusColor;
+  final Color statusBackground;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                medicine.name,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
                 ),
-                const SizedBox(height: 5),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 7,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: statusBackground,
-                    borderRadius: BorderRadius.circular(7),
-                  ),
-                  child: Text(
-                    statusText,
-                    style: TextStyle(
-                      color: statusColor,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 8,
+                vertical: 4,
+              ),
+              decoration: BoxDecoration(
+                color: statusBackground,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                medicine.statusText,
+                style: TextStyle(
+                  color: statusColor,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
                 ),
-              ],
+              ),
+            ),
+          ],
+        ),
+        if (medicine.instruction.isNotEmpty)
+          Text(
+            medicine.instruction,
+            style: const TextStyle(
+              fontSize: 12,
+              color: Color(0xFF475467),
+            ),
+          ),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 6,
+          runSpacing: 5,
+          children: medicine.times.map((time) {
+            return Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 8,
+                vertical: 3,
+              ),
+              decoration: BoxDecoration(
+                color: const Color(0xFF2F80ED),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                time,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
+}
+
+class MedicineDateInfoRow extends StatelessWidget {
+  const MedicineDateInfoRow({
+    super.key,
+    required this.medicine,
+  });
+
+  final MedicineEntry medicine;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: SmallInfoText(
+            title: 'শুরু',
+            value: formatShortDate(medicine.startDate),
+          ),
+        ),
+        Expanded(
+          child: SmallInfoText(
+            title: 'শেষ',
+            value: formatShortDate(medicine.endDate),
+          ),
+        ),
+        Expanded(
+          child: SmallInfoText(
+            title: 'সময়কাল',
+            value: '${medicine.totalDays} দিন',
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class SmallInfoText extends StatelessWidget {
+  const SmallInfoText({
+    super.key,
+    required this.title,
+    required this.value,
+  });
+
+  final String title;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            color: Color(0xFF667085),
+            fontSize: 10,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          style: const TextStyle(
+            color: Color(0xFF344054),
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class MedicineDaysSummary extends StatelessWidget {
+  const MedicineDaysSummary({
+    super.key,
+    required this.takenDays,
+    required this.remainingDays,
+  });
+
+  final int takenDays;
+  final int remainingDays;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: DaySummaryBox(
+            title: 'খাওয়া হয়েছে',
+            value: '$takenDays দিন',
+            backgroundColor: const Color(0xFFEFFAF2),
+            textColor: const Color(0xFF16A34A),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: DaySummaryBox(
+            title: 'বাকি',
+            value: '$remainingDays দিন',
+            backgroundColor: const Color(0xFFFFF4E5),
+            textColor: const Color(0xFFEA580C),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class DaySummaryBox extends StatelessWidget {
+  const DaySummaryBox({
+    super.key,
+    required this.title,
+    required this.value,
+    required this.backgroundColor,
+    required this.textColor,
+  });
+
+  final String title;
+  final String value;
+  final Color backgroundColor;
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 10,
+        vertical: 8,
+      ),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              color: textColor,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: TextStyle(
+              color: textColor,
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class MedicineDateProgressStrip extends StatelessWidget {
+  const MedicineDateProgressStrip({
+    super.key,
+    required this.medicine,
+  });
+
+  final MedicineEntry medicine;
+
+  @override
+  Widget build(BuildContext context) {
+    final dates = getMedicineDates(medicine);
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: dates.map((date) {
+          return DailyDoseBox(
+            medicine: medicine,
+            date: date,
+          );
+        }).toList(),
+      ),
+    );
+  }
+}
+
+class DailyDoseBox extends StatelessWidget {
+  const DailyDoseBox({
+    super.key,
+    required this.medicine,
+    required this.date,
+  });
+
+  final MedicineEntry medicine;
+  final DateTime date;
+
+  @override
+  Widget build(BuildContext context) {
+    final isTaken = isMedicineDayTaken(medicine, date);
+    final isMissed = isMedicineDayMissed(medicine, date);
+
+    IconData icon = Icons.remove;
+    Color iconColor = const Color(0xFF667085);
+    Color backgroundColor = Colors.white;
+    Color borderColor = const Color(0xFFE4E7EC);
+
+    if (isTaken) {
+      icon = Icons.check_circle;
+      iconColor = const Color(0xFF16A34A);
+      backgroundColor = const Color(0xFFEFFAF2);
+      borderColor = const Color(0xFFBBF7D0);
+    } else if (isMissed) {
+      icon = Icons.cancel;
+      iconColor = const Color(0xFFDC2626);
+      backgroundColor = const Color(0xFFFFF1F1);
+      borderColor = const Color(0xFFFECACA);
+    }
+
+    return Container(
+      width: 62,
+      margin: const EdgeInsets.only(right: 7),
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: borderColor),
+      ),
+      child: Column(
+        children: [
+          Text(
+            formatShortDate(date),
+            style: const TextStyle(
+              fontSize: 10,
+              color: Color(0xFF344054),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Icon(
+            icon,
+            color: iconColor,
+            size: 18,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class PatientActivityCard extends StatelessWidget {
+  const PatientActivityCard({
+    super.key,
+    required this.patient,
+  });
+
+  final Patient patient;
+
+  @override
+  Widget build(BuildContext context) {
+    final logs = patient.activityLogs.take(5).toList();
+
+    return Material(
+      color: Colors.white,
+      elevation: 3,
+      shadowColor: Colors.black.withOpacity(0.12),
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'সাম্প্রতিক কার্যকলাপ',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (logs.isEmpty)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 18),
+                  child: Text(
+                    'এখনো কোনো কার্যকলাপ নেই',
+                    style: TextStyle(
+                      color: Color(0xFF667085),
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              )
+            else
+              ...logs.map((log) {
+                final isTaken = log.status == 'খেয়েছে';
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 9),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: isTaken
+                        ? const Color(0xFFEFFAF2)
+                        : const Color(0xFFFFF1F1),
+                    borderRadius: BorderRadius.circular(11),
+                    border: Border.all(
+                      color: isTaken
+                          ? const Color(0xFFBBF7D0)
+                          : const Color(0xFFFECACA),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        isTaken ? Icons.check_circle : Icons.cancel,
+                        color: isTaken
+                            ? const Color(0xFF16A34A)
+                            : const Color(0xFFDC2626),
+                        size: 24,
+                      ),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Text(
+                          '${formatShortDate(log.date)}, ${log.periodName} - ${log.medicineName} ${log.status}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        formatActivityTime(log.time),
+                        style: const TextStyle(
+                          color: Color(0xFF667085),
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+          ],
+        ),
       ),
     );
   }
@@ -940,7 +1468,7 @@ class MedicineReminderDemoScreen extends StatelessWidget {
                 MedicineLargePhoto(imagePath: medicine.imagePath),
                 const SizedBox(height: 16),
                 Text(
-                  '${periodTitle(period)}ের ওষুধ খাওয়ার সময় হয়েছে',
+                  '${periodPossessive(period)} ওষুধ খাওয়ার সময় হয়েছে',
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     fontSize: 19,
