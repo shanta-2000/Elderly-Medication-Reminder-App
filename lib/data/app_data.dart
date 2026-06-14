@@ -3,11 +3,22 @@ import '../models/patient_model.dart';
 
 class AppData {
   static Caregiver? caregiver;
+  static Patient? currentPatient;
 
   static final List<Patient> patients = [];
 
   static void saveCaregiver(Caregiver newCaregiver) {
     caregiver = newCaregiver;
+  }
+
+  static void savePatient(Patient patient) {
+    currentPatient = patient;
+  }
+
+  static void clearSession() {
+    caregiver = null;
+    currentPatient = null;
+    patients.clear();
   }
 
   static bool caregiverLoginMatched({
