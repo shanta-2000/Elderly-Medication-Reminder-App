@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
-import 'caregiver_dashboard_screen.dart';
+
 import '../data/app_data.dart';
 import '../models/caregiver_model.dart';
+import '../services/firebase_database_service.dart';
+import 'caregiver_dashboard_screen.dart';
 
 class CaregiverAccountScreen extends StatefulWidget {
   const CaregiverAccountScreen({super.key});
@@ -19,6 +21,8 @@ class _CaregiverAccountScreenState extends State<CaregiverAccountScreen> {
   final emailController = TextEditingController();
   final addressController = TextEditingController();
 
+  bool isSaving = false;
+
   @override
   void dispose() {
     userIdController.dispose();
@@ -31,7 +35,7 @@ class _CaregiverAccountScreenState extends State<CaregiverAccountScreen> {
     super.dispose();
   }
 
-  void createAccount() {
+  Future<void> createAccount() async {
     final userId = userIdController.text.trim();
     final password = passwordController.text.trim();
     final confirmPassword = confirmPasswordController.text.trim();
@@ -51,6 +55,15 @@ class _CaregiverAccountScreenState extends State<CaregiverAccountScreen> {
       return;
     }
 
+    if (password.length < 4) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('পাসওয়ার্ড কমপক্ষে ৪ অক্ষরের হতে হবে'),
+        ),
+      );
+      return;
+    }
+
     if (password != confirmPassword) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -59,25 +72,52 @@ class _CaregiverAccountScreenState extends State<CaregiverAccountScreen> {
       );
       return;
     }
-    AppData.saveCaregiver(
-      Caregiver(
+
+    setState(() {
+      isSaving = true;
+    });
+
+    try {
+      final caregiver = Caregiver(
         userId: userId,
         password: password,
         fullName: fullName,
         phone: phone,
         email: emailController.text.trim(),
         address: addressController.text.trim(),
-      ),
-    );
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (context) => CaregiverDashboardScreen(
-          caregiverName: fullName,
-          showAccountCreatedDialog: true,
+      );
+
+      final savedCaregiver =
+      await FirebaseDatabaseService.instance.saveCaregiver(caregiver);
+
+      AppData.saveCaregiver(savedCaregiver);
+
+      if (!mounted) return;
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => CaregiverDashboardScreen(
+            caregiverName: savedCaregiver.fullName,
+            showAccountCreatedDialog: true,
+          ),
         ),
-      ),
-    );
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('একাউন্ট তৈরি করা যায়নি: $error'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          isSaving = false;
+        });
+      }
+    }
   }
 
   @override
@@ -173,7 +213,7 @@ class _CaregiverAccountScreenState extends State<CaregiverAccountScreen> {
                 width: double.infinity,
                 height: 56,
                 child: ElevatedButton(
-                  onPressed: createAccount,
+                  onPressed: isSaving ? null : createAccount,
                   style: ElevatedButton.styleFrom(
                     padding: EdgeInsets.zero,
                     elevation: 0,
@@ -195,7 +235,16 @@ class _CaregiverAccountScreenState extends State<CaregiverAccountScreen> {
                     ),
                     child: Container(
                       alignment: Alignment.center,
-                      child: const Text(
+                      child: isSaving
+                          ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2.2,
+                        ),
+                      )
+                          : const Text(
                         'একাউন্ট তৈরি করুন',
                         style: TextStyle(
                           color: Colors.white,
@@ -308,4 +357,3 @@ class CustomInputField extends StatelessWidget {
     );
   }
 }
-

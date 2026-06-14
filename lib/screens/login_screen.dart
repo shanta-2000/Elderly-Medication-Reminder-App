@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../data/app_data.dart';
 import '../models/patient_model.dart';
+import '../services/firebase_database_service.dart';
 import 'caregiver_account_screen.dart';
 import 'caregiver_dashboard_screen.dart';
 import 'patient_dashboard_screen.dart';
@@ -24,6 +25,8 @@ class _LoginScreenState extends State<LoginScreen> {
   final userIdController = TextEditingController();
   final passwordController = TextEditingController();
 
+  bool isLoading = false;
+
   @override
   void dispose() {
     userIdController.dispose();
@@ -31,7 +34,7 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  void login() {
+  Future<void> login() async {
     final userId = userIdController.text.trim();
     final password = passwordController.text.trim();
 
@@ -44,50 +47,75 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    if (selectedRole == LoginRole.caregiver) {
-      final isMatched = AppData.caregiverLoginMatched(
-        userId: userId,
-        password: password,
-      );
+    setState(() {
+      isLoading = true;
+    });
 
-      if (!isMatched) {
-        showErrorDialog('পরিচর্যাকারীর তথ্য মেলেনি');
-        return;
-      }
+    try {
+      if (selectedRole == LoginRole.caregiver) {
+        final caregiver = await FirebaseDatabaseService.instance.loginCaregiver(
+          userId: userId,
+          password: password,
+        );
 
-      showLoginSuccessDialog(
-        onOk: () {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (context) => CaregiverDashboardScreen(
-                caregiverName: AppData.caregiver!.fullName,
+        if (!mounted) return;
+
+        if (caregiver == null) {
+          showErrorDialog('পরিচর্যাকারীর তথ্য মেলেনি');
+          return;
+        }
+
+        AppData.saveCaregiver(caregiver);
+
+        showLoginSuccessDialog(
+          onOk: () {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => CaregiverDashboardScreen(
+                  caregiverName: caregiver.fullName,
+                ),
               ),
-            ),
-          );
-        },
-      );
-    } else {
-      final Patient? patient = AppData.findPatientByLogin(
-        userId: userId,
-        password: password,
-      );
+            );
+          },
+        );
+      } else {
+        final Patient? patient =
+        await FirebaseDatabaseService.instance.loginPatient(
+          userId: userId,
+          password: password,
+        );
 
-      if (patient == null) {
-        showErrorDialog('রোগীর তথ্য মেলেনি');
-        return;
+        if (!mounted) return;
+
+        if (patient == null) {
+          showErrorDialog('রোগীর তথ্য মেলেনি');
+          return;
+        }
+
+        AppData.savePatient(patient);
+
+        showLoginSuccessDialog(
+          onOk: () {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => PatientDashboardScreen(patient: patient),
+              ),
+            );
+          },
+        );
       }
+    } catch (error) {
+      if (!mounted) return;
 
-      showLoginSuccessDialog(
-        onOk: () {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (context) => PatientDashboardScreen(patient: patient),
-            ),
-          );
-        },
-      );
+      showErrorDialog('লগইন করা যায়নি: $error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          isLoading = false;
+        });
+      }
     }
   }
 
@@ -250,7 +278,7 @@ class _LoginScreenState extends State<LoginScreen> {
               width: double.infinity,
               height: 56,
               child: ElevatedButton(
-                onPressed: login,
+                onPressed: isLoading ? null : login,
                 style: ElevatedButton.styleFrom(
                   padding: EdgeInsets.zero,
                   elevation: 4,
@@ -272,7 +300,16 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   child: Container(
                     alignment: Alignment.center,
-                    child: const Text(
+                    child: isLoading
+                        ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2.2,
+                      ),
+                    )
+                        : const Text(
                       'লগ ইন করুন',
                       style: TextStyle(
                         color: Colors.white,
@@ -286,7 +323,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
             const SizedBox(height: 18),
             TextButton(
-              onPressed: openCreateAccountPage,
+              onPressed: isLoading ? null : openCreateAccountPage,
               child: const Text(
                 'একাউন্ট নেই? নতুন একাউন্ট তৈরি করুন',
                 style: TextStyle(
@@ -329,7 +366,8 @@ class RoleCard extends StatelessWidget {
           color: Colors.white,
           borderRadius: BorderRadius.circular(11),
           border: Border.all(
-            color: isSelected ? const Color(0xFFB144F5) : const Color(0xFFE4E7EC),
+            color:
+            isSelected ? const Color(0xFFB144F5) : const Color(0xFFE4E7EC),
             width: isSelected ? 1.7 : 1,
           ),
         ),
