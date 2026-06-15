@@ -3,7 +3,10 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../data/app_data.dart';
 import '../models/patient_model.dart';
+import '../services/cloudinary_service.dart';
+import '../services/firebase_database_service.dart';
 
 class AddPatientScreen extends StatefulWidget {
   const AddPatientScreen({super.key});
@@ -21,6 +24,7 @@ class _AddPatientScreenState extends State<AddPatientScreen> {
   final diseaseController = TextEditingController();
 
   String selectedPhotoPath = '';
+  bool isSaving = false;
 
   @override
   void dispose() {
@@ -38,7 +42,9 @@ class _AddPatientScreenState extends State<AddPatientScreen> {
 
     final pickedImage = await picker.pickImage(
       source: ImageSource.gallery,
-      imageQuality: 80,
+      imageQuality: 50,
+      maxWidth: 900,
+      maxHeight: 900,
     );
 
     if (pickedImage != null) {
@@ -48,7 +54,18 @@ class _AddPatientScreenState extends State<AddPatientScreen> {
     }
   }
 
-  void addPatient() {
+  Future<void> addPatient() async {
+    final caregiver = AppData.caregiver;
+
+    if (caregiver == null || caregiver.id.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('পরিচর্যাকারীর তথ্য পাওয়া যায়নি। আবার লগইন করুন।'),
+        ),
+      );
+      return;
+    }
+
     final userId = userIdController.text.trim();
     final password = passwordController.text.trim();
     final confirmPassword = confirmPasswordController.text.trim();
@@ -68,6 +85,15 @@ class _AddPatientScreenState extends State<AddPatientScreen> {
       return;
     }
 
+    if (password.length < 4) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('পাসওয়ার্ড কমপক্ষে ৪ অক্ষরের হতে হবে'),
+        ),
+      );
+      return;
+    }
+
     if (password != confirmPassword) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -77,43 +103,80 @@ class _AddPatientScreenState extends State<AddPatientScreen> {
       return;
     }
 
-    final patient = Patient(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      userId: userId,
-      password: password,
-      name: patientName,
-      age: age,
-      photoPath: selectedPhotoPath,
-      diseaseList: diseaseController.text.trim(),
-    );
+    setState(() {
+      isSaving = true;
+    });
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text(
-            'রোগী যোগ হয়েছে',
-            textAlign: TextAlign.center,
-          ),
-          content: const Text(
-            'রোগীর তথ্য সফলভাবে যোগ করা হয়েছে।',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 16),
-          ),
-          actionsAlignment: MainAxisAlignment.center,
-          actions: [
-            FilledButton(
-              onPressed: () {
-                Navigator.pop(dialogContext);
-                Navigator.pop(context, patient);
-              },
-              child: const Text('ঠিক আছে'),
-            ),
-          ],
+    try {
+      String uploadedPhotoUrl = '';
+
+      if (selectedPhotoPath.isNotEmpty) {
+        uploadedPhotoUrl = await CloudinaryService.uploadImage(
+          imagePath: selectedPhotoPath,
         );
-      },
-    );
+      }
+
+      final patient = Patient(
+        id: '',
+        caregiverId: caregiver.id,
+        userId: userId,
+        password: password,
+        name: patientName,
+        age: age,
+        photoPath: selectedPhotoPath,
+        photoUrl: uploadedPhotoUrl,
+        diseaseList: diseaseController.text.trim(),
+      );
+
+      final savedPatient =
+      await FirebaseDatabaseService.instance.savePatient(patient);
+
+      if (!mounted) return;
+
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: const Text(
+              'রোগী যোগ হয়েছে',
+              textAlign: TextAlign.center,
+            ),
+            content: Text(
+              uploadedPhotoUrl.isEmpty
+                  ? 'রোগীর তথ্য সফলভাবে Firestore-এ সংরক্ষণ হয়েছে।'
+                  : 'রোগীর ছবি Cloudinary-তে upload হয়েছে এবং তথ্য Firestore-এ সংরক্ষণ হয়েছে।',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 16),
+            ),
+            actionsAlignment: MainAxisAlignment.center,
+            actions: [
+              FilledButton(
+                onPressed: () {
+                  Navigator.pop(dialogContext);
+                  Navigator.pop(context, savedPatient);
+                },
+                child: const Text('ঠিক আছে'),
+              ),
+            ],
+          );
+        },
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('রোগী যোগ করা যায়নি: $error'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          isSaving = false;
+        });
+      }
+    }
   }
 
   @override
@@ -213,7 +276,7 @@ class _AddPatientScreenState extends State<AddPatientScreen> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: OutlinedButton.icon(
-                          onPressed: pickPatientPhoto,
+                          onPressed: isSaving ? null : pickPatientPhoto,
                           icon: const Icon(Icons.photo_library_outlined),
                           label: const Text('গ্যালারি থেকে ছবি নিন'),
                         ),
@@ -232,7 +295,7 @@ class _AddPatientScreenState extends State<AddPatientScreen> {
                     width: double.infinity,
                     height: 56,
                     child: ElevatedButton(
-                      onPressed: addPatient,
+                      onPressed: isSaving ? null : addPatient,
                       style: ElevatedButton.styleFrom(
                         padding: EdgeInsets.zero,
                         elevation: 4,
@@ -254,7 +317,16 @@ class _AddPatientScreenState extends State<AddPatientScreen> {
                         ),
                         child: Container(
                           alignment: Alignment.center,
-                          child: const Text(
+                          child: isSaving
+                              ? const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2.2,
+                            ),
+                          )
+                              : const Text(
                             'রোগী যোগ করুন',
                             style: TextStyle(
                               color: Colors.white,

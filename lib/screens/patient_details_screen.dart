@@ -3,144 +3,11 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../models/patient_model.dart';
+import '../services/cloudinary_service.dart';
+import '../services/firebase_database_service.dart';
+import '../utils/dose_status_helper.dart';
 import 'add_medicine_screen.dart';
-
-String twoDigit(int value) {
-  return value.toString().padLeft(2, '0');
-}
-
-String dateKey(DateTime date) {
-  final cleanDate = dateOnly(date);
-  return '${cleanDate.year}-${twoDigit(cleanDate.month)}-${twoDigit(cleanDate.day)}';
-}
-
-String formatShortDate(DateTime date) {
-  const months = [
-    'জানু',
-    'ফেব',
-    'মার্চ',
-    'এপ্রিল',
-    'মে',
-    'জুন',
-    'জুলাই',
-    'আগ',
-    'সেপ্ট',
-    'অক্টো',
-    'নভে',
-    'ডিসে',
-  ];
-
-  return '${date.day} ${months[date.month - 1]}';
-}
-
-String formatFullDate(DateTime date) {
-  const months = [
-    'জানু',
-    'ফেব',
-    'মার্চ',
-    'এপ্রিল',
-    'মে',
-    'জুন',
-    'জুলাই',
-    'আগ',
-    'সেপ্ট',
-    'অক্টো',
-    'নভে',
-    'ডিসে',
-  ];
-
-  return '${date.day} ${months[date.month - 1]} ${date.year}';
-}
-
-String periodKeyFromTimeText(String timeText) {
-  final lowerText = timeText.toLowerCase();
-  final match = RegExp(r'(\d{1,2}):(\d{2})').firstMatch(timeText);
-
-  if (match == null) return 'morning';
-
-  int hour = int.tryParse(match.group(1) ?? '0') ?? 0;
-
-  if (lowerText.contains('pm') && hour != 12) {
-    hour += 12;
-  }
-
-  if (lowerText.contains('am') && hour == 12) {
-    hour = 0;
-  }
-
-  if (hour >= 5 && hour < 12) {
-    return 'morning';
-  } else if (hour >= 12 && hour < 18) {
-    return 'afternoon';
-  } else {
-    return 'night';
-  }
-}
-
-String doseKeyFromDateAndPeriod(DateTime date, String periodKey) {
-  return '${dateKey(date)}_$periodKey';
-}
-
-List<String> getMedicinePeriodKeys(MedicineEntry medicine) {
-  final keys = <String>{};
-
-  for (final time in medicine.times) {
-    keys.add(periodKeyFromTimeText(time));
-  }
-
-  const orderedKeys = ['morning', 'afternoon', 'night'];
-
-  return orderedKeys.where(keys.contains).toList();
-}
-
-List<DateTime> getMedicineDates(MedicineEntry medicine) {
-  final dates = <DateTime>[];
-  DateTime currentDate = dateOnly(medicine.startDate);
-  final endDate = dateOnly(medicine.endDate);
-
-  while (!currentDate.isAfter(endDate)) {
-    dates.add(currentDate);
-    currentDate = currentDate.add(const Duration(days: 1));
-  }
-
-  return dates;
-}
-
-bool isMedicineDayTaken(MedicineEntry medicine, DateTime date) {
-  final periodKeys = getMedicinePeriodKeys(medicine);
-
-  if (periodKeys.isEmpty) return false;
-
-  return periodKeys.every((periodKey) {
-    return medicine.takenDoseKeys.contains(
-      doseKeyFromDateAndPeriod(date, periodKey),
-    );
-  });
-}
-
-bool isMedicineDayMissed(MedicineEntry medicine, DateTime date) {
-  final periodKeys = getMedicinePeriodKeys(medicine);
-
-  return periodKeys.any((periodKey) {
-    return medicine.missedDoseKeys.contains(
-      doseKeyFromDateAndPeriod(date, periodKey),
-    );
-  });
-}
-
-int takenDaysCount(MedicineEntry medicine) {
-  return getMedicineDates(medicine).where((date) {
-    return isMedicineDayTaken(medicine, date);
-  }).length;
-}
-
-int remainingDaysByTakenCount(MedicineEntry medicine) {
-  final remaining = medicine.totalDays - takenDaysCount(medicine);
-
-  if (remaining < 0) return 0;
-
-  return remaining;
-}
+import 'edit_patient_screen.dart';
 
 class PatientDetailsScreen extends StatefulWidget {
   const PatientDetailsScreen({
@@ -155,143 +22,372 @@ class PatientDetailsScreen extends StatefulWidget {
 }
 
 class _PatientDetailsScreenState extends State<PatientDetailsScreen> {
+  bool isSavingMedicine = false;
+  bool isDeletingPatient = false;
+
+  late Patient currentPatient;
+
+  @override
+  void initState() {
+    super.initState();
+    currentPatient = widget.patient;
+  }
+
+  Future<void> openEditPatientScreen() async {
+    final Patient? updatedPatient = await Navigator.push<Patient>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => EditPatientScreen(
+          patient: currentPatient,
+        ),
+      ),
+    );
+
+    if (!mounted || updatedPatient == null) return;
+
+    setState(() {
+      currentPatient = updatedPatient;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('রোগীর তথ্য আপডেট হয়েছে'),
+      ),
+    );
+  }
+
+  Future<void> confirmDeletePatient() async {
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text(
+            'রোগী মুছে ফেলবেন?',
+            textAlign: TextAlign.center,
+          ),
+          content: Text(
+            '${currentPatient.name} মুছে ফেললে এই রোগীর সব ওষুধ ও activity log মুছে যাবে।',
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 15),
+          ),
+          actionsAlignment: MainAxisAlignment.spaceEvenly,
+          actions: [
+            OutlinedButton(
+              onPressed: () {
+                Navigator.pop(dialogContext, false);
+              },
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.red,
+              ),
+              onPressed: () {
+                Navigator.pop(dialogContext, true);
+              },
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldDelete == true) {
+      await deletePatient();
+    }
+  }
+
+  Future<void> deletePatient() async {
+    if (currentPatient.id.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('রোগীর Firebase ID পাওয়া যায়নি'),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      isDeletingPatient = true;
+    });
+
+    try {
+      await FirebaseDatabaseService.instance.deletePatientWithRelatedData(
+        currentPatient.id,
+      );
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('রোগী, ওষুধ ও activity log মুছে ফেলা হয়েছে'),
+        ),
+      );
+
+      Navigator.pop(context, true);
+    } catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('রোগী মুছে ফেলা যায়নি: $error'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          isDeletingPatient = false;
+        });
+      }
+    }
+  }
+
   Future<void> openAddMedicineScreen() async {
     final MedicineEntry? newMedicine = await Navigator.push<MedicineEntry>(
       context,
       MaterialPageRoute(
         builder: (context) => AddMedicineScreen(
-          patientName: widget.patient.name,
+          patientName: currentPatient.name,
         ),
       ),
     );
 
-    if (!mounted) return;
+    if (!mounted || newMedicine == null) return;
 
-    if (newMedicine != null) {
-      setState(() {
-        widget.patient.medicines.add(newMedicine);
-      });
+    await saveMedicineToFirebase(
+      medicineFromEditor: newMedicine,
+      existingMedicine: null,
+    );
+  }
+
+  Future<void> openEditMedicineScreen(MedicineEntry medicine) async {
+    final MedicineEntry? editedMedicine = await Navigator.push<MedicineEntry>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AddMedicineScreen(
+          patientName: currentPatient.name,
+          existingMedicine: medicine,
+        ),
+      ),
+    );
+
+    if (!mounted || editedMedicine == null) return;
+
+    await saveMedicineToFirebase(
+      medicineFromEditor: editedMedicine,
+      existingMedicine: medicine,
+    );
+  }
+
+  Future<void> saveMedicineToFirebase({
+    required MedicineEntry medicineFromEditor,
+    required MedicineEntry? existingMedicine,
+  }) async {
+    if (currentPatient.id.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('রোগীর Firebase ID পাওয়া যায়নি'),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      isSavingMedicine = true;
+    });
+
+    try {
+      String finalImageUrl = medicineFromEditor.imageUrl;
+
+      final isNewImageSelected = medicineFromEditor.imagePath.isNotEmpty &&
+          medicineFromEditor.imagePath != (existingMedicine?.imagePath ?? '');
+
+      if (isNewImageSelected) {
+        finalImageUrl = await CloudinaryService.uploadImage(
+          imagePath: medicineFromEditor.imagePath,
+        );
+      }
+
+      final medicineToSave = medicineFromEditor.copyWith(
+        id: existingMedicine?.id ?? '',
+        caregiverId: currentPatient.caregiverId,
+        patientId: currentPatient.id,
+        imageUrl: finalImageUrl,
+      );
+
+      await FirebaseDatabaseService.instance.saveMedicine(medicineToSave);
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            existingMedicine == null
+                ? 'ওষুধ Firestore-এ সংরক্ষণ হয়েছে'
+                : 'ওষুধ আপডেট হয়েছে',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('ওষুধ সংরক্ষণ করা যায়নি: $error'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          isSavingMedicine = false;
+        });
+      }
+    }
+  }
+
+  Future<void> confirmDeleteMedicine(MedicineEntry medicine) async {
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text(
+            'ওষুধ মুছে ফেলবেন?',
+            textAlign: TextAlign.center,
+          ),
+          content: Text(
+            '${medicine.name} মুছে ফেললে এই ওষুধটি রোগীর তালিকা থেকে চলে যাবে।',
+            textAlign: TextAlign.center,
+          ),
+          actionsAlignment: MainAxisAlignment.spaceEvenly,
+          actions: [
+            OutlinedButton(
+              onPressed: () {
+                Navigator.pop(dialogContext, false);
+              },
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.red,
+              ),
+              onPressed: () {
+                Navigator.pop(dialogContext, true);
+              },
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldDelete == true) {
+      await deleteMedicine(medicine);
+    }
+  }
+
+  Future<void> deleteMedicine(MedicineEntry medicine) async {
+    try {
+      await FirebaseDatabaseService.instance.deleteMedicine(medicine.id);
+
+      if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('ওষুধের তালিকা আপডেট হয়েছে'),
+          content: Text('ওষুধ মুছে ফেলা হয়েছে'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('ওষুধ মুছে ফেলা যায়নি: $error'),
         ),
       );
     }
   }
 
-  void deleteMedicine(MedicineEntry medicine) {
-    setState(() {
-      widget.patient.medicines.remove(medicine);
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
-    final patient = widget.patient;
+    final basePatient = currentPatient;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF7F8FA),
       body: SafeArea(
         child: Column(
           children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.only(bottom: 14),
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Color(0xFFB144F5),
-                    Color(0xFFFF2D8C),
-                  ],
-                ),
-              ),
-              child: Column(
-                children: [
-                  SizedBox(
-                    height: 54,
-                    child: Row(
-                      children: [
-                        IconButton(
-                          onPressed: () => Navigator.pop(context),
-                          icon: const Icon(
-                            Icons.arrow_back,
-                            color: Colors.white,
-                          ),
-                        ),
-                        const Text(
-                          'রোগীর বিস্তারিত তথ্য',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 20,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 12),
-                    padding: const EdgeInsets.all(14),
-                    width: double.infinity,
-                    height: 166,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(11),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        PatientLargePhoto(photoPath: patient.photoPath),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: PatientInfoText(patient: patient),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+            PatientDetailsHeader(
+              patient: basePatient,
+              isDeletingPatient: isDeletingPatient,
+              onEditPatient: openEditPatientScreen,
+              onDeletePatient: confirmDeletePatient,
             ),
             Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: StatCard(
-                          value: patient.takenToday.toString(),
-                          label: 'আজ খেয়েছে',
-                          backgroundColor: const Color(0xFFEFFAF2),
-                          borderColor: const Color(0xFF9AE6B4),
-                          valueColor: Colors.green,
+              child: StreamBuilder<List<MedicineEntry>>(
+                stream: FirebaseDatabaseService.instance
+                    .watchMedicinesByPatient(basePatient.id),
+                builder: (context, medicineSnapshot) {
+                  if (medicineSnapshot.hasError) {
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(18),
+                        child: Text(
+                          'ওষুধের তথ্য লোড করা যায়নি:\n${medicineSnapshot.error}',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.red),
                         ),
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: StatCard(
-                          value: patient.missedToday.toString(),
-                          label: 'আজ খায়নি',
-                          backgroundColor: const Color(0xFFFFF1F1),
-                          borderColor: const Color(0xFFFFB4B4),
-                          valueColor: Colors.red,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  MedicineListSection(
-                    key: ValueKey(
-                      '${patient.medicines.length}_${patient.activityLogs.length}',
-                    ),
-                    medicines: patient.medicines,
-                    onAddMedicine: openAddMedicineScreen,
-                    onDeleteMedicine: deleteMedicine,
-                  ),
-                  const SizedBox(height: 14),
-                  ActivitySection(patient: widget.patient),
-                ],
+                    );
+                  }
+
+                  final medicines = medicineSnapshot.data ?? [];
+
+                  return StreamBuilder<List<PatientActivityLog>>(
+                    stream: FirebaseDatabaseService.instance
+                        .watchActivityLogsByPatient(basePatient.id),
+                    builder: (context, activitySnapshot) {
+                      final logs = activitySnapshot.data ?? [];
+
+                      final todaySummary = helperPatientSummaryForDate(
+                        medicines: medicines,
+                        date: DateTime.now(),
+                      );
+
+                      final patient = basePatient.copyWith(
+                        medicines: medicines,
+                        activityLogs: logs,
+                      );
+
+                      return ListView(
+                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+                        children: [
+                          if (medicineSnapshot.connectionState ==
+                              ConnectionState.waiting)
+                            const Padding(
+                              padding: EdgeInsets.only(bottom: 10),
+                              child: LinearProgressIndicator(),
+                            ),
+                          TodayDoseSummarySection(
+                            summary: todaySummary,
+                          ),
+                          const SizedBox(height: 14),
+                          MedicineListSection(
+                            key: ValueKey(
+                              '${patient.medicines.length}_${patient.activityLogs.length}_$isSavingMedicine',
+                            ),
+                            medicines: patient.medicines,
+                            isSavingMedicine: isSavingMedicine,
+                            onAddMedicine: openAddMedicineScreen,
+                            onEditMedicine: openEditMedicineScreen,
+                            onDeleteMedicine: confirmDeleteMedicine,
+                          ),
+                          const SizedBox(height: 14),
+                          ActivitySection(patient: patient),
+                        ],
+                      );
+                    },
+                  );
+                },
               ),
             ),
           ],
@@ -301,39 +397,239 @@ class _PatientDetailsScreenState extends State<PatientDetailsScreen> {
   }
 }
 
+class TodayDoseSummarySection extends StatelessWidget {
+  const TodayDoseSummarySection({
+    super.key,
+    required this.summary,
+  });
+
+  final DoseSummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = summary.total;
+
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: StatCard(
+                value: total.toString(),
+                label: 'আজ ডোজ',
+                backgroundColor: const Color(0xFFF2F7FF),
+                borderColor: const Color(0xFFD8E7FF),
+                valueColor: const Color(0xFF2563EB),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: StatCard(
+                value: '${summary.taken}/$total',
+                label: 'নিয়েছে',
+                backgroundColor: const Color(0xFFEFFAF2),
+                borderColor: const Color(0xFF9AE6B4),
+                valueColor: const Color(0xFF16A34A),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: StatCard(
+                value: '${summary.pending}/$total',
+                label: 'Pending',
+                backgroundColor: const Color(0xFFFFF7E6),
+                borderColor: const Color(0xFFFFD58A),
+                valueColor: const Color(0xFFEA580C),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: StatCard(
+                value: '${summary.missed}/$total',
+                label: 'খায়নি',
+                backgroundColor: const Color(0xFFFFF1F1),
+                borderColor: const Color(0xFFFFB4B4),
+                valueColor: const Color(0xFFDC2626),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class PatientDetailsHeader extends StatelessWidget {
+  const PatientDetailsHeader({
+    super.key,
+    required this.patient,
+    required this.isDeletingPatient,
+    required this.onEditPatient,
+    required this.onDeletePatient,
+  });
+
+  final Patient patient;
+  final bool isDeletingPatient;
+  final VoidCallback onEditPatient;
+  final VoidCallback onDeletePatient;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.only(bottom: 14),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Color(0xFFB144F5),
+            Color(0xFFFF2D8C),
+          ],
+        ),
+      ),
+      child: Column(
+        children: [
+          SizedBox(
+            height: 54,
+            child: Row(
+              children: [
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(
+                    Icons.arrow_back,
+                    color: Colors.white,
+                  ),
+                ),
+                const Expanded(
+                  child: Text(
+                    'রোগীর বিস্তারিত তথ্য',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: isDeletingPatient ? null : onEditPatient,
+                  icon: const Icon(
+                    Icons.edit,
+                    color: Colors.white,
+                  ),
+                ),
+                IconButton(
+                  onPressed: isDeletingPatient ? null : onDeletePatient,
+                  icon: isDeletingPatient
+                      ? const SizedBox(
+                    width: 19,
+                    height: 19,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2,
+                    ),
+                  )
+                      : const Icon(
+                    Icons.delete_outline,
+                    color: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 12),
+            padding: const EdgeInsets.all(14),
+            width: double.infinity,
+            height: 166,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                PatientLargePhoto(
+                  photoPath: patient.photoPath,
+                  photoUrl: patient.photoUrl,
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: PatientInfoText(patient: patient),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class PatientLargePhoto extends StatelessWidget {
   const PatientLargePhoto({
     super.key,
     required this.photoPath,
+    required this.photoUrl,
   });
 
   final String photoPath;
+  final String photoUrl;
 
   @override
   Widget build(BuildContext context) {
-    if (photoPath.isEmpty) {
-      return Container(
-        width: 58,
-        height: 58,
-        decoration: BoxDecoration(
-          color: const Color(0xFFEDE7F6),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: const Icon(
-          Icons.person,
-          color: Color(0xFFB144F5),
-          size: 35,
+    if (photoUrl.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.network(
+          photoUrl,
+          width: 58,
+          height: 58,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            return const DefaultPatientLargeIcon();
+          },
         ),
       );
     }
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: Image.file(
-        File(photoPath),
-        width: 58,
-        height: 58,
-        fit: BoxFit.cover,
+    if (photoPath.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.file(
+          File(photoPath),
+          width: 58,
+          height: 58,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            return const DefaultPatientLargeIcon();
+          },
+        ),
+      );
+    }
+
+    return const DefaultPatientLargeIcon();
+  }
+}
+
+class DefaultPatientLargeIcon extends StatelessWidget {
+  const DefaultPatientLargeIcon({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 58,
+      height: 58,
+      decoration: BoxDecoration(
+        color: const Color(0xFFEDE7F6),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: const Icon(
+        Icons.person,
+        color: Color(0xFFB144F5),
+        size: 35,
       ),
     );
   }
@@ -424,7 +720,7 @@ class StatCard extends StatelessWidget {
             style: TextStyle(
               color: valueColor,
               fontSize: 18,
-              fontWeight: FontWeight.w700,
+              fontWeight: FontWeight.w800,
             ),
           ),
           const SizedBox(height: 4),
@@ -435,7 +731,7 @@ class StatCard extends StatelessWidget {
             style: TextStyle(
               color: valueColor,
               fontSize: 12,
-              fontWeight: FontWeight.w500,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],
@@ -448,12 +744,16 @@ class MedicineListSection extends StatelessWidget {
   const MedicineListSection({
     super.key,
     required this.medicines,
+    required this.isSavingMedicine,
     required this.onAddMedicine,
+    required this.onEditMedicine,
     required this.onDeleteMedicine,
   });
 
   final List<MedicineEntry> medicines;
+  final bool isSavingMedicine;
   final VoidCallback onAddMedicine;
+  final void Function(MedicineEntry medicine) onEditMedicine;
   final void Function(MedicineEntry medicine) onDeleteMedicine;
 
   @override
@@ -472,11 +772,11 @@ class MedicineListSection extends StatelessWidget {
         child: Column(
           children: [
             InkWell(
-              onTap: onAddMedicine,
+              onTap: isSavingMedicine ? null : onAddMedicine,
               borderRadius: BorderRadius.circular(10),
               child: Row(
                 children: [
-                  const Icon(Icons.link, size: 21),
+                  const Icon(Icons.medication_outlined, size: 21),
                   const SizedBox(width: 8),
                   const Expanded(
                     child: Text(
@@ -494,7 +794,15 @@ class MedicineListSection extends StatelessWidget {
                       color: Color(0xFFB144F5),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(
+                    child: isSavingMedicine
+                        ? const Padding(
+                      padding: EdgeInsets.all(7),
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
+                    )
+                        : const Icon(
                       Icons.add,
                       color: Colors.white,
                       size: 23,
@@ -510,6 +818,7 @@ class MedicineListSection extends StatelessWidget {
               ...medicines.map(
                     (medicine) => MedicineTile(
                   medicine: medicine,
+                  onEdit: () => onEditMedicine(medicine),
                   onDelete: () => onDeleteMedicine(medicine),
                 ),
               ),
@@ -552,16 +861,23 @@ class MedicineTile extends StatelessWidget {
   const MedicineTile({
     super.key,
     required this.medicine,
+    required this.onEdit,
     required this.onDelete,
   });
 
   final MedicineEntry medicine;
+  final VoidCallback onEdit;
   final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
-    final takenDays = takenDaysCount(medicine);
-    final remainingDays = remainingDaysByTakenCount(medicine);
+    final todaySummary = helperMedicineSummaryForDate(
+      medicine: medicine,
+      date: DateTime.now(),
+    );
+
+    final takenDays = helperMedicineTakenDaysCount(medicine);
+    final remainingDays = helperMedicineRemainingDaysCount(medicine);
     final totalDays = medicine.totalDays;
     final progressValue = totalDays == 0 ? 0.0 : takenDays / totalDays;
 
@@ -588,88 +904,21 @@ class MedicineTile extends StatelessWidget {
         children: [
           Row(
             children: [
-              MedicineSmallPhoto(imagePath: medicine.imagePath),
+              MedicineSmallPhoto(
+                imagePath: medicine.imagePath,
+                imageUrl: medicine.imageUrl,
+              ),
               const SizedBox(width: 10),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            medicine.name,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.black,
-                            ),
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: statusBackground,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            medicine.statusText,
-                            style: TextStyle(
-                              color: statusColor,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (medicine.instruction.isNotEmpty)
-                      Text(
-                        medicine.instruction,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: Color(0xFF475467),
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    const SizedBox(height: 5),
-                    Wrap(
-                      spacing: 5,
-                      runSpacing: 5,
-                      children: medicine.times.map((time) {
-                        return Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF2563EB),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            time,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ],
+                child: MedicineMainInfo(
+                  medicine: medicine,
+                  statusColor: statusColor,
+                  statusBackground: statusBackground,
                 ),
               ),
-              IconButton(
-                onPressed: onDelete,
-                icon: const Icon(
-                  Icons.close,
-                  color: Colors.red,
-                  size: 18,
-                ),
+              MedicineActionButtons(
+                onEdit: onEdit,
+                onDelete: onDelete,
               ),
             ],
           ),
@@ -679,13 +928,13 @@ class MedicineTile extends StatelessWidget {
               Expanded(
                 child: SmallMedicineInfo(
                   title: 'শুরু',
-                  value: formatShortDate(medicine.startDate),
+                  value: helperFormatShortDate(medicine.startDate),
                 ),
               ),
               Expanded(
                 child: SmallMedicineInfo(
                   title: 'শেষ',
-                  value: formatShortDate(medicine.endDate),
+                  value: helperFormatShortDate(medicine.endDate),
                 ),
               ),
               Expanded(
@@ -697,11 +946,15 @@ class MedicineTile extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
+          TodayMedicineDosePanel(
+            summary: todaySummary,
+          ),
+          const SizedBox(height: 10),
           Row(
             children: [
               Expanded(
                 child: MedicineDayBox(
-                  title: 'খাওয়া হয়েছে',
+                  title: 'সম্পন্ন দিন',
                   value: '$takenDays দিন',
                   backgroundColor: const Color(0xFFEFFAF2),
                   textColor: const Color(0xFF16A34A),
@@ -710,7 +963,7 @@ class MedicineTile extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: MedicineDayBox(
-                  title: 'বাকি',
+                  title: 'বাকি দিন',
                   value: '$remainingDays দিন',
                   backgroundColor: const Color(0xFFFFF4E5),
                   textColor: const Color(0xFFEA580C),
@@ -730,6 +983,239 @@ class MedicineTile extends StatelessWidget {
           MedicineDateProgressStrip(medicine: medicine),
         ],
       ),
+    );
+  }
+}
+
+class MedicineMainInfo extends StatelessWidget {
+  const MedicineMainInfo({
+    super.key,
+    required this.medicine,
+    required this.statusColor,
+    required this.statusBackground,
+  });
+
+  final MedicineEntry medicine;
+  final Color statusColor;
+  final Color statusBackground;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                medicine.name,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.black,
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 8,
+                vertical: 4,
+              ),
+              decoration: BoxDecoration(
+                color: statusBackground,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                medicine.statusText,
+                style: TextStyle(
+                  color: statusColor,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+        if (medicine.instruction.isNotEmpty)
+          Text(
+            medicine.instruction,
+            style: const TextStyle(
+              fontSize: 11,
+              color: Color(0xFF475467),
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        const SizedBox(height: 5),
+        Wrap(
+          spacing: 5,
+          runSpacing: 5,
+          children: medicine.times.map((time) {
+            return Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 7,
+                vertical: 3,
+              ),
+              decoration: BoxDecoration(
+                color: const Color(0xFF2563EB),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                time,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
+}
+
+class MedicineActionButtons extends StatelessWidget {
+  const MedicineActionButtons({
+    super.key,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        IconButton(
+          visualDensity: VisualDensity.compact,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(
+            minWidth: 32,
+            minHeight: 32,
+          ),
+          onPressed: onEdit,
+          icon: const Icon(
+            Icons.edit,
+            color: Color(0xFF2563EB),
+            size: 18,
+          ),
+        ),
+        IconButton(
+          visualDensity: VisualDensity.compact,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(
+            minWidth: 32,
+            minHeight: 32,
+          ),
+          onPressed: onDelete,
+          icon: const Icon(
+            Icons.delete_outline,
+            color: Colors.red,
+            size: 19,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class TodayMedicineDosePanel extends StatelessWidget {
+  const TodayMedicineDosePanel({
+    super.key,
+    required this.summary,
+  });
+
+  final DoseSummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = summary.total;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 8,
+        vertical: 9,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(
+          color: const Color(0xFFE4E7EC),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: SmallDoseText(
+              label: 'আজ ডোজ',
+              value: total.toString(),
+              color: const Color(0xFF2563EB),
+            ),
+          ),
+          Expanded(
+            child: SmallDoseText(
+              label: 'নিয়েছে',
+              value: '${summary.taken}/$total',
+              color: const Color(0xFF16A34A),
+            ),
+          ),
+          Expanded(
+            child: SmallDoseText(
+              label: 'Pending',
+              value: '${summary.pending}/$total',
+              color: const Color(0xFFEA580C),
+            ),
+          ),
+          Expanded(
+            child: SmallDoseText(
+              label: 'খায়নি',
+              value: '${summary.missed}/$total',
+              color: const Color(0xFFDC2626),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class SmallDoseText extends StatelessWidget {
+  const SmallDoseText({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: TextStyle(
+            color: color,
+            fontSize: 13,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Color(0xFF344054),
+            fontSize: 9,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -829,7 +1315,7 @@ class MedicineDateProgressStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dates = getMedicineDates(medicine);
+    final dates = helperMedicineDates(medicine);
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -857,24 +1343,29 @@ class DailyDoseBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isTaken = isMedicineDayTaken(medicine, date);
-    final isMissed = isMedicineDayMissed(medicine, date);
+    final summary = helperMedicineSummaryForDate(
+      medicine: medicine,
+      date: date,
+    );
 
-    IconData icon = Icons.remove;
-    Color iconColor = const Color(0xFF667085);
+    final displayText = helperSmallStatusText(summary);
+
+    Color textColor = const Color(0xFF667085);
     Color backgroundColor = Colors.white;
     Color borderColor = const Color(0xFFE4E7EC);
 
-    if (isTaken) {
-      icon = Icons.check_circle;
-      iconColor = const Color(0xFF16A34A);
+    if (summary.isAllTaken) {
+      textColor = const Color(0xFF16A34A);
       backgroundColor = const Color(0xFFEFFAF2);
       borderColor = const Color(0xFFBBF7D0);
-    } else if (isMissed) {
-      icon = Icons.cancel;
-      iconColor = const Color(0xFFDC2626);
+    } else if (summary.isAllMissed) {
+      textColor = const Color(0xFFDC2626);
       backgroundColor = const Color(0xFFFFF1F1);
       borderColor = const Color(0xFFFECACA);
+    } else if (summary.isPartial) {
+      textColor = const Color(0xFFEA580C);
+      backgroundColor = const Color(0xFFFFF7E6);
+      borderColor = const Color(0xFFFFD58A);
     }
 
     return Container(
@@ -889,7 +1380,7 @@ class DailyDoseBox extends StatelessWidget {
       child: Column(
         children: [
           Text(
-            formatShortDate(date),
+            helperFormatShortDate(date),
             style: const TextStyle(
               fontSize: 10,
               color: Color(0xFF344054),
@@ -897,10 +1388,13 @@ class DailyDoseBox extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 5),
-          Icon(
-            icon,
-            color: iconColor,
-            size: 18,
+          Text(
+            displayText,
+            style: TextStyle(
+              color: textColor,
+              fontSize: displayText.length > 1 ? 13 : 18,
+              fontWeight: FontWeight.w900,
+            ),
           ),
         ],
       ),
@@ -912,35 +1406,64 @@ class MedicineSmallPhoto extends StatelessWidget {
   const MedicineSmallPhoto({
     super.key,
     required this.imagePath,
+    required this.imageUrl,
   });
 
   final String imagePath;
+  final String imageUrl;
 
   @override
   Widget build(BuildContext context) {
-    if (imagePath.isEmpty) {
-      return Container(
-        width: 54,
-        height: 54,
-        decoration: BoxDecoration(
-          color: const Color(0xFFEDE7F6),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: const Icon(
-          Icons.medication_liquid,
-          color: Color(0xFFB144F5),
-          size: 28,
+    if (imageUrl.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.network(
+          imageUrl,
+          width: 54,
+          height: 54,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            return const DefaultMedicineIcon();
+          },
         ),
       );
     }
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: Image.file(
-        File(imagePath),
-        width: 54,
-        height: 54,
-        fit: BoxFit.cover,
+    if (imagePath.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.file(
+          File(imagePath),
+          width: 54,
+          height: 54,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            return const DefaultMedicineIcon();
+          },
+        ),
+      );
+    }
+
+    return const DefaultMedicineIcon();
+  }
+}
+
+class DefaultMedicineIcon extends StatelessWidget {
+  const DefaultMedicineIcon({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 54,
+      height: 54,
+      decoration: BoxDecoration(
+        color: const Color(0xFFEDE7F6),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: const Icon(
+        Icons.medication_liquid,
+        color: Color(0xFFB144F5),
+        size: 28,
       ),
     );
   }
@@ -953,19 +1476,6 @@ class ActivitySection extends StatelessWidget {
   });
 
   final Patient patient;
-
-  String formatActivityTime(DateTime time) {
-    final hour = time.hour > 12
-        ? time.hour - 12
-        : time.hour == 0
-        ? 12
-        : time.hour;
-
-    final minute = time.minute.toString().padLeft(2, '0');
-    final period = time.hour >= 12 ? 'PM' : 'AM';
-
-    return '$hour:$minute $period';
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -1048,7 +1558,7 @@ class ActivitySection extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              formatFullDate(log.date),
+                              helperFormatFullDate(log.date),
                               style: const TextStyle(
                                 fontSize: 11,
                                 color: Color(0xFF344054),
@@ -1067,7 +1577,7 @@ class ActivitySection extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        formatActivityTime(log.time),
+                        helperFormatActivityTime(log.time),
                         style: const TextStyle(
                           fontSize: 11,
                           color: Color(0xFF667085),

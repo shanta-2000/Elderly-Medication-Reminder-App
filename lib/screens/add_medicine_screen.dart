@@ -9,9 +9,13 @@ class AddMedicineScreen extends StatefulWidget {
   const AddMedicineScreen({
     super.key,
     required this.patientName,
+    this.existingMedicine,
   });
 
   final String patientName;
+  final MedicineEntry? existingMedicine;
+
+  bool get isEditMode => existingMedicine != null;
 
   @override
   State<AddMedicineScreen> createState() => _AddMedicineScreenState();
@@ -23,6 +27,8 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
   final durationController = TextEditingController(text: '7');
 
   String medicineImagePath = '';
+  String existingImageUrl = '';
+
   final List<String> medicineTimes = [];
 
   DateTime startDate = dateOnly(DateTime.now());
@@ -30,6 +36,28 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
 
   bool useCustomEndDate = false;
   String selectedDurationUnit = 'দিন';
+
+  @override
+  void initState() {
+    super.initState();
+
+    final existing = widget.existingMedicine;
+
+    if (existing != null) {
+      medicineNameController.text = existing.name;
+      instructionController.text = existing.instruction;
+      durationController.text = existing.totalDays.toString();
+
+      medicineImagePath = existing.imagePath;
+      existingImageUrl = existing.imageUrl;
+
+      medicineTimes.addAll(existing.times);
+
+      startDate = dateOnly(existing.startDate);
+      customEndDate = dateOnly(existing.endDate);
+      useCustomEndDate = true;
+    }
+  }
 
   @override
   void dispose() {
@@ -95,6 +123,8 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     final pickedImage = await picker.pickImage(
       source: ImageSource.gallery,
       imageQuality: 80,
+      maxWidth: 1000,
+      maxHeight: 1000,
     );
 
     if (pickedImage != null) {
@@ -111,8 +141,12 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     );
 
     if (pickedTime != null) {
+      final formattedTime = pickedTime.format(context);
+
       setState(() {
-        medicineTimes.add(pickedTime.format(context));
+        if (!medicineTimes.contains(formattedTime)) {
+          medicineTimes.add(formattedTime);
+        }
       });
     }
   }
@@ -200,14 +234,33 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       return;
     }
 
+    final existing = widget.existingMedicine;
+
     final medicine = MedicineEntry(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      id: existing?.id ?? '',
+      caregiverId: existing?.caregiverId ?? '',
+      patientId: existing?.patientId ?? '',
       name: medicineName,
       imagePath: medicineImagePath,
+      imageUrl: existingImageUrl,
       instruction: instructionController.text.trim(),
       times: List<String>.from(medicineTimes),
       startDate: startDate,
       endDate: endDate,
+      takenPeriodKeys: existing == null
+          ? <String>{}
+          : Set<String>.from(existing.takenPeriodKeys),
+      missedPeriodKeys: existing == null
+          ? <String>{}
+          : Set<String>.from(existing.missedPeriodKeys),
+      takenDoseKeys: existing == null
+          ? <String>{}
+          : Set<String>.from(existing.takenDoseKeys),
+      missedDoseKeys: existing == null
+          ? <String>{}
+          : Set<String>.from(existing.missedDoseKeys),
+      isTakenToday: existing?.isTakenToday ?? false,
+      isMissedToday: existing?.isMissedToday ?? false,
     );
 
     showDialog(
@@ -215,8 +268,8 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       barrierDismissible: false,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text(
-            'ওষুধ সংরক্ষিত হয়েছে',
+          title: Text(
+            widget.isEditMode ? 'ওষুধ আপডেট হয়েছে' : 'ওষুধ সংরক্ষিত হয়েছে',
             textAlign: TextAlign.center,
           ),
           content: Text(
@@ -254,9 +307,11 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
           title: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'নতুন ওষুধ যোগ করুন',
-                style: TextStyle(
+              Text(
+                widget.isEditMode
+                    ? 'ওষুধ সম্পাদনা করুন'
+                    : 'নতুন ওষুধ যোগ করুন',
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 19,
                   fontWeight: FontWeight.w600,
@@ -293,7 +348,6 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
               hint: 'যেমন: Napa',
             ),
             const SizedBox(height: 14),
-
             const Text(
               'ওষুধের ছবি',
               style: TextStyle(
@@ -305,18 +359,24 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
             const SizedBox(height: 8),
             Row(
               children: [
-                MedicinePhotoPreview(imagePath: medicineImagePath),
+                MedicinePhotoPreview(
+                  imagePath: medicineImagePath,
+                  imageUrl: existingImageUrl,
+                ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: pickMedicineImage,
                     icon: const Icon(Icons.photo_library_outlined),
-                    label: const Text('গ্যালারি থেকে ছবি নিন'),
+                    label: Text(
+                      widget.isEditMode
+                          ? 'ছবি পরিবর্তন করুন'
+                          : 'গ্যালারি থেকে ছবি নিন',
+                    ),
                   ),
                 ),
               ],
             ),
-
             const SizedBox(height: 14),
             MedicineInputField(
               controller: instructionController,
@@ -324,7 +384,6 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
               hint: 'যেমন: খাবার পরে খেতে হবে',
               maxLines: 3,
             ),
-
             const SizedBox(height: 14),
             const Text(
               'খাওয়ার সময় *',
@@ -377,7 +436,6 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                 label: const Text('আরও সময় যোগ করুন'),
               ),
             ),
-
             const SizedBox(height: 16),
             const Text(
               'শুরু তারিখ',
@@ -392,7 +450,6 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
               text: formatDate(startDate),
               onTap: pickStartDate,
             ),
-
             const SizedBox(height: 16),
             const Text(
               'সময়কাল নির্বাচন করুন',
@@ -411,7 +468,6 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                 });
               },
             ),
-
             const SizedBox(height: 12),
             if (!useCustomEndDate)
               Row(
@@ -458,14 +514,12 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                   ),
                 ],
               ),
-
             const SizedBox(height: 14),
             DurationSummaryBox(
               startDateText: formatDate(startDate),
               endDateText: formatDate(endDate),
               totalDays: totalDays,
             ),
-
             const SizedBox(height: 18),
             SizedBox(
               width: double.infinity,
@@ -493,9 +547,11 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                   ),
                   child: Container(
                     alignment: Alignment.center,
-                    child: const Text(
-                      'ওষুধ সংরক্ষণ করুন',
-                      style: TextStyle(
+                    child: Text(
+                      widget.isEditMode
+                          ? 'ওষুধ আপডেট করুন'
+                          : 'ওষুধ সংরক্ষণ করুন',
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 17,
                         fontWeight: FontWeight.w600,
@@ -766,35 +822,64 @@ class MedicinePhotoPreview extends StatelessWidget {
   const MedicinePhotoPreview({
     super.key,
     required this.imagePath,
+    required this.imageUrl,
   });
 
   final String imagePath;
+  final String imageUrl;
 
   @override
   Widget build(BuildContext context) {
-    if (imagePath.isEmpty) {
-      return Container(
-        width: 64,
-        height: 64,
-        decoration: BoxDecoration(
-          color: const Color(0xFFEDE7F6),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: const Icon(
-          Icons.medication_liquid,
-          color: Color(0xFFB144F5),
-          size: 34,
+    if (imagePath.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: Image.file(
+          File(imagePath),
+          width: 64,
+          height: 64,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            return const DefaultMedicinePreviewIcon();
+          },
         ),
       );
     }
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(14),
-      child: Image.file(
-        File(imagePath),
-        width: 64,
-        height: 64,
-        fit: BoxFit.cover,
+    if (imageUrl.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: Image.network(
+          imageUrl,
+          width: 64,
+          height: 64,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            return const DefaultMedicinePreviewIcon();
+          },
+        ),
+      );
+    }
+
+    return const DefaultMedicinePreviewIcon();
+  }
+}
+
+class DefaultMedicinePreviewIcon extends StatelessWidget {
+  const DefaultMedicinePreviewIcon({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 64,
+      height: 64,
+      decoration: BoxDecoration(
+        color: const Color(0xFFEDE7F6),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: const Icon(
+        Icons.medication_liquid,
+        color: Color(0xFFB144F5),
+        size: 34,
       ),
     );
   }

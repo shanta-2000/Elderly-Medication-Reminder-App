@@ -6,6 +6,7 @@ import '../services/firebase_database_service.dart';
 import 'caregiver_account_screen.dart';
 import 'caregiver_dashboard_screen.dart';
 import 'patient_dashboard_screen.dart';
+import '../services/session_service.dart';
 
 enum LoginRole {
   caregiver,
@@ -66,6 +67,11 @@ class _LoginScreenState extends State<LoginScreen> {
         }
 
         AppData.saveCaregiver(caregiver);
+        await SessionService.saveLogin(
+          role: SessionService.roleCaregiver,
+          userId: userId,
+          password: password,
+        );
 
         showLoginSuccessDialog(
           onOk: () {
@@ -94,6 +100,11 @@ class _LoginScreenState extends State<LoginScreen> {
         }
 
         AppData.savePatient(patient);
+        await SessionService.saveLogin(
+          role: SessionService.rolePatient,
+          userId: userId,
+          password: password,
+        );
 
         showLoginSuccessDialog(
           onOk: () {

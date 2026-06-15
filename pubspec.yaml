@@ -43,6 +43,9 @@ dependencies:
   timezone: ^0.11.0
   path: ^1.9.1
   http: ^1.6.0
+  shared_preferences: ^2.5.5
+  confetti: ^0.8.0
+  audioplayers: ^6.7.1
 
 dev_dependencies:
   flutter_test:
@@ -54,6 +57,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -67,6 +71,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/logo.png
+    - assets/sounds/
 
   # To add assets to your application, add an assets section, like this:
   # assets:
@@ -98,3 +103,9 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/images/logo.png"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/images/logo.png"

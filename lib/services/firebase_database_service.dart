@@ -38,6 +38,7 @@ class FirebaseDatabaseService {
 
   Future<Caregiver> saveCaregiver(Caregiver caregiver) async {
     final token = await getFcmToken();
+
     final docRef = caregiver.id.isEmpty
         ? _caregivers.doc()
         : _caregivers.doc(caregiver.id);
@@ -94,41 +95,85 @@ class FirebaseDatabaseService {
       id: docRef.id,
     );
 
-    await docRef.set({
+    final data = {
       ...patientWithId.toMap(),
-      'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
-    });
+    };
+
+    if (patient.id.isEmpty) {
+      data['createdAt'] = FieldValue.serverTimestamp();
+    }
+
+    await docRef.set(
+      data,
+      SetOptions(merge: true),
+    );
 
     return patientWithId;
+  }
+
+  Future<void> deletePatientWithRelatedData(String patientId) async {
+    if (patientId.isEmpty) return;
+
+    final batch = _firestore.batch();
+
+    final medicinesSnapshot = await _medicines
+        .where('patientId', isEqualTo: patientId)
+        .get();
+
+    for (final doc in medicinesSnapshot.docs) {
+      batch.delete(doc.reference);
+    }
+
+    final logsSnapshot = await _activityLogs
+        .where('patientId', isEqualTo: patientId)
+        .get();
+
+    for (final doc in logsSnapshot.docs) {
+      batch.delete(doc.reference);
+    }
+
+    batch.delete(_patients.doc(patientId));
+
+    await batch.commit();
   }
 
   Future<List<Patient>> getPatientsByCaregiver(String caregiverId) async {
     final snapshot = await _patients
         .where('caregiverId', isEqualTo: caregiverId)
-        .orderBy('name')
         .get();
 
-    return snapshot.docs.map((doc) {
+    final patients = snapshot.docs.map((doc) {
       return Patient.fromMap(
         id: doc.id,
         map: doc.data(),
       );
     }).toList();
+
+    patients.sort(
+          (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+    );
+
+    return patients;
   }
 
   Stream<List<Patient>> watchPatientsByCaregiver(String caregiverId) {
     return _patients
         .where('caregiverId', isEqualTo: caregiverId)
-        .orderBy('name')
         .snapshots()
         .map((snapshot) {
-      return snapshot.docs.map((doc) {
+      final patients = snapshot.docs.map((doc) {
         return Patient.fromMap(
           id: doc.id,
           map: doc.data(),
         );
       }).toList();
+
+      patients.sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+      );
+
+      return patients;
     });
   }
 
@@ -170,11 +215,19 @@ class FirebaseDatabaseService {
       id: docRef.id,
     );
 
-    await docRef.set({
+    final data = {
       ...medicineWithId.toMap(),
-      'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
-    });
+    };
+
+    if (medicine.id.isEmpty) {
+      data['createdAt'] = FieldValue.serverTimestamp();
+    }
+
+    await docRef.set(
+      data,
+      SetOptions(merge: true),
+    );
 
     return medicineWithId;
   }
@@ -182,30 +235,36 @@ class FirebaseDatabaseService {
   Stream<List<MedicineEntry>> watchMedicinesByPatient(String patientId) {
     return _medicines
         .where('patientId', isEqualTo: patientId)
-        .orderBy('createdAt', descending: true)
         .snapshots()
         .map((snapshot) {
-      return snapshot.docs.map((doc) {
+      final medicines = snapshot.docs.map((doc) {
         return MedicineEntry.fromMap(
           id: doc.id,
           map: doc.data(),
         );
       }).toList();
+
+      medicines.sort((a, b) => b.startDate.compareTo(a.startDate));
+
+      return medicines;
     });
   }
 
   Future<List<MedicineEntry>> getMedicinesByPatient(String patientId) async {
     final snapshot = await _medicines
         .where('patientId', isEqualTo: patientId)
-        .orderBy('createdAt', descending: true)
         .get();
 
-    return snapshot.docs.map((doc) {
+    final medicines = snapshot.docs.map((doc) {
       return MedicineEntry.fromMap(
         id: doc.id,
         map: doc.data(),
       );
     }).toList();
+
+    medicines.sort((a, b) => b.startDate.compareTo(a.startDate));
+
+    return medicines;
   }
 
   Future<void> updateMedicineDoseStatus(MedicineEntry medicine) async {
@@ -220,6 +279,12 @@ class FirebaseDatabaseService {
       'isMissedToday': medicine.isMissedToday,
       'updatedAt': FieldValue.serverTimestamp(),
     });
+  }
+
+  Future<void> deleteMedicine(String medicineId) async {
+    if (medicineId.isEmpty) return;
+
+    await _medicines.doc(medicineId).delete();
   }
 
   Future<void> saveActivityLog(PatientActivityLog log) async {
@@ -238,15 +303,18 @@ class FirebaseDatabaseService {
       ) {
     return _activityLogs
         .where('patientId', isEqualTo: patientId)
-        .orderBy('createdAt', descending: true)
         .snapshots()
         .map((snapshot) {
-      return snapshot.docs.map((doc) {
+      final logs = snapshot.docs.map((doc) {
         return PatientActivityLog.fromMap(
           id: doc.id,
           map: doc.data(),
         );
       }).toList();
+
+      logs.sort((a, b) => b.time.compareTo(a.time));
+
+      return logs;
     });
   }
 
@@ -255,14 +323,17 @@ class FirebaseDatabaseService {
       ) async {
     final snapshot = await _activityLogs
         .where('patientId', isEqualTo: patientId)
-        .orderBy('createdAt', descending: true)
         .get();
 
-    return snapshot.docs.map((doc) {
+    final logs = snapshot.docs.map((doc) {
       return PatientActivityLog.fromMap(
         id: doc.id,
         map: doc.data(),
       );
     }).toList();
+
+    logs.sort((a, b) => b.time.compareTo(a.time));
+
+    return logs;
   }
 }
